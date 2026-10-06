@@ -1,0 +1,219 @@
+/* Better Quiz Box
+ * 纯瞬态作答;选项为 Markdown 内容,无 [ ]/[c] 显示
+ * 模式:static / immediate / non-immediate;可选自动编号标签(abc/123) */
+
+.quiz-block {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    background-color: var(--background-secondary);
+}
+
+.quiz-question {
+    margin-bottom: 10px;
+}
+
+.quiz-question--single {
+    font-weight: 600;
+}
+
+.quiz-question p {
+    margin: 0;
+}
+
+.quiz-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* 选项行:细边框显式分割(所有模式),内容 = 图标 + 编号 + Markdown 正文 */
+.quiz-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background-color: var(--background-primary);
+    cursor: default;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+    user-select: none;
+}
+
+.quiz-option::before {
+    content: "";
+    flex: none;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.quiz-option__body {
+    flex: 1;
+    min-width: 0;
+}
+
+.quiz-option__body p {
+    margin: 0;
+}
+
+.quiz-option__body > :first-child {
+    margin-top: 0;
+}
+
+.quiz-option__body > :last-child {
+    margin-bottom: 0;
+}
+
+/* ---------- 动态块(immediate / non-immediate):保留悬停交互 ---------- */
+.quiz-block--immediate .quiz-option,
+.quiz-block--non-immediate .quiz-option {
+    cursor: pointer;
+}
+
+.quiz-block--immediate .quiz-option:hover,
+.quiz-block--non-immediate .quiz-option:hover {
+    background-color: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
+}
+
+/* ===== mode: immediate — 对绿 ✓ / 错红 ✗ / 揭示正确项绿 ✓ ===== */
+.quiz-option--wrong {
+    background-color: #fee2e2 !important;
+    border-color: #ef4444 !important;
+    color: #b91c1c !important;
+}
+
+.quiz-option--wrong::before {
+    content: "\2717"; /* ✗ */
+    color: #ef4444;
+}
+
+.quiz-option--right,
+.quiz-option--revealed,
+.quiz-block--static .quiz-option--correct {
+    background-color: #dcfce7 !important;
+    border-color: #16a34a !important;
+    color: #15803d !important;
+}
+
+.quiz-option--right::before,
+.quiz-option--revealed::before,
+.quiz-block--static .quiz-option--correct::before {
+    content: "\2713"; /* ✓ */
+    color: #16a34a;
+}
+
+.theme-dark .quiz-option--wrong {
+    background-color: #3f1115 !important;
+    border-color: #f87171 !important;
+    color: #fecaca !important;
+}
+
+.theme-dark .quiz-option--right,
+.theme-dark .quiz-option--revealed,
+.theme-dark .quiz-block--static .quiz-option--correct {
+    background-color: #052e16 !important;
+    border-color: #4ade80 !important;
+    color: #bbf7d0 !important;
+}
+
+/* ===== mode: non-immediate — 选中即深色,不判对错 ===== */
+.quiz-option--selected {
+    background-color: #e2e8f0 !important;
+    border-color: #64748b !important;
+    color: #1e293b !important;
+}
+
+.theme-dark .quiz-option--selected {
+    background-color: #334155 !important;
+    border-color: #94a3b8 !important;
+    color: #f1f5f9 !important;
+}
+
+/* ===== 自动编号标签(<!-- number: abc|123 -->)===== */
+/* 仅在设置了 number 时(.quiz-block--numbered)显示;小框比背景亮一档且可区分 */
+.quiz-option__label {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    min-width: 1.5em;
+    height: 1.5em;
+    margin-top: 1px;
+    padding: 0 2px;
+    border-radius: 4px;
+    font-family: var(--font-monospace);
+    font-size: 0.78em;
+    font-weight: 700;
+    line-height: 1;
+    user-select: none;
+    background-color: #dfe6f0;
+    color: #3f4c66;
+}
+
+.quiz-block--numbered .quiz-option__label {
+    display: inline-flex;
+}
+
+.theme-dark .quiz-option__label {
+    background-color: #49566e;
+    color: #dbe3f0;
+}
+
+/* 作答后编号小框跟随状态色:错=红 / 对=绿 / 选中=灰蓝 */
+.quiz-option--wrong .quiz-option__label {
+    background-color: #ef4444;
+    color: #ffffff;
+}
+
+.quiz-option--right .quiz-option__label,
+.quiz-option--revealed .quiz-option__label,
+.quiz-block--static .quiz-option--correct .quiz-option__label {
+    background-color: #16a34a;
+    color: #ffffff;
+}
+
+.quiz-option--selected .quiz-option__label {
+    background-color: #64748b;
+    color: #ffffff;
+}
+
+/* ===== mode: static — 静态答案展示,整块不可交互 ===== */
+.quiz-block--static .quiz-option:hover {
+    background-color: var(--background-primary);
+}
+
+.theme-dark .quiz-block--static .quiz-option {
+    background-color: var(--background-primary);
+}
+
+/* 解析块:static 恒显示;动态块在作答后显示 */
+.quiz-details {
+    display: none;
+    margin-top: 2px;
+    margin-bottom: -10px;
+    color: var(--text-muted);
+}
+
+.quiz-details--visible {
+    display: block;
+}
+
+.quiz-details p {
+    margin: 0;
+}
+
+/* 编辑视图嵌入块:去掉外框干扰 */
+.cm-embed-block:has(.quiz-block),
+.cm-embed-block:has(.quiz-block):hover {
+    box-shadow: none !important;
+    outline: none !important;
+    border: none !important;
+}
+
+.cm-embed-block:has(.quiz-block) .edit-block-button {
+    top: auto !important;
+    bottom: 16px !important;
+}

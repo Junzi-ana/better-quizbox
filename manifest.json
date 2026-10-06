@@ -1,0 +1,11 @@
+{
+	"id": "better-quizbox",
+	"name": "Better Quiz Box",
+	"version": "3.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Render interactive multiple-choice quiz blocks: transient-only answering (never writes to notes), Markdown/LaTeX questions & options, static / immediate / non-immediate modes, option shuffling and cross-block order binding, SR-review friendly (flip-facing preserves order & answers).",
+	"author": "Junzi-ana",
+	"authorUrl": "https://github.com/Junzi-ana",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
