@@ -72,6 +72,16 @@ Duplicate options (same text, ignoring case and surrounding whitespace) are dedu
 | `immediate` | Every click is judged at once: green ✓ or red ✗ | Quick self-testing |
 | `non-immediate` | Clicks only highlight selections; with two or more `[c]` options the block becomes multi-select | Exam-style practice |
 
+## Settings
+
+Three defaults live in Settings → Better Quiz Box; explicit block attributes always win:
+
+- **Default answer mode** — `immediate` / `non-immediate` / `static`
+- **Shuffle options by default** — on / off
+- **Default option numbering** — none / A B C / 1 2 3
+
+Changes apply to newly rendered blocks; already-rendered ones stay as they are. A block can always override a default with its own attribute, e.g. `<!-- number: none -->` turns numbering off for that block even when a default is set.
+
 ## Installation
 
 Manual: grab `main.js`, `manifest.json`, and `styles.css` from the latest [release](../../releases), put them into `<vault>/.obsidian/plugins/better-quizbox/`, then enable the plugin under Settings → Community plugins.
@@ -168,6 +178,16 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 | `static` | 高亮正确选项，块不可点击 | 笔记、答案页 |
 | `immediate` | 每次点击立即判分：对绿 ✓、错红 ✗ | 快速自测 |
 | `non-immediate` | 点击仅高亮所选；有两个及以上 `[c]` 时转为多选 | 考试式练习 |
+
+## 设置
+
+设置 → Better Quiz Box 里有三项缺省值；块内显式属性始终优先：
+
+- **默认作答模式**——`immediate` / `non-immediate` / `static`
+- **默认打乱选项**——开 / 关
+- **默认选项编号**——无 / ABC / 123
+
+改动只影响之后渲染的块，已在页面上的不变。块内可以用自己的属性覆盖缺省，例如设了默认编号后，单个块写 `<!-- number: none -->` 即可关掉编号。
 
 ## 安装
 

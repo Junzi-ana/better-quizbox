@@ -47,6 +47,7 @@ import {
   resetTransientState
 } from "./state.mjs";
 import { buildBlock, applyVisuals, dynamicClick } from "./render.mjs";
+import { DEFAULT_SETTINGS, QuizBoxSettingTab } from "./settings.mjs";
 import { Plugin, MarkdownRenderer } from "obsidian";
 
 /* -------------------------------- 处理器注册 -------------------------------- */
@@ -54,6 +55,11 @@ import { Plugin, MarkdownRenderer } from "obsidian";
 function registerQuizProcessor(plugin) {
   plugin.registerMarkdownCodeBlockProcessor("quiz", async (source, el, ctx) => {
     const data = parseQuiz(source);
+    // 应用设置栏缺省:块内显式属性优先;未设置的属性(null)按插件设置填充。
+    // 就地写回 data.attrs,使后续(订阅/视觉/点击)统一读到已解析的值。
+    if (data.attrs.mode == null) data.attrs.mode = plugin.settings.defaultMode || "immediate";
+    if (data.attrs.shuffle == null) data.attrs.shuffle = plugin.settings.defaultShuffle !== false;
+    if (data.attrs.number == null) data.attrs.number = plugin.settings.defaultNumbering || "none";
     const file = ctx.sourcePath;
     const key = file + "\u0000" + source;
     const container = stableContainer(el);
@@ -155,7 +161,12 @@ function registerQuizProcessor(plugin) {
 
 export default class QuizBlockPlugin extends Plugin {
   async onload() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     registerQuizProcessor(this);
+  }
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
   onunload() {
     resetTransientState();

@@ -41,6 +41,8 @@ export function normalizeBoolToken(v) {
 
 export function normalizeNumberToken(v) {
   const t = v.toLowerCase().replace(/[\s_]+/g, "");
+  // 显式 none:与"未设置"(null)区分,可在设置定了缺省编号后单独关掉
+  if (t === "none") return "none";
   if (["abc", "alpha", "letters", "letter"].includes(t)) return "abc";
   if (["123", "number", "numeric", "digits", "num", "numbers"].includes(t)) return "123";
   return null;
@@ -80,7 +82,7 @@ export function parseQuiz(source) {
     }
     content.push(line);
   }
-  attrs.mode = attrs.mode || "immediate";
+  // mode 未设置时保持 null,由处理器按插件设置填充缺省(块属性显式给出的仍在此解析)
 
   const optMeta = []; // { i: content 行号, state, first }
   content.forEach((line, i) => {

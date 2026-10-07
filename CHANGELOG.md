@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0
+
+- Added a settings tab with three defaults: answer mode, option shuffling, and option numbering. Explicit block attributes still win; `<!-- number: none -->` now works as an explicit "no labels" override.
+
 ## 3.0.0 — 2026-10-06
 
 Initial release.

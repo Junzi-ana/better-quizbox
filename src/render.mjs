@@ -18,7 +18,8 @@ export function nextState(state) {
 export function buildBlock(container, data) {
   container.empty();
   const cls = ["quiz-block", "quiz-block--" + data.attrs.mode];
-  if (data.attrs.number) cls.push("quiz-block--numbered");
+  // 编号小框仅在明确要显示编号时出现("none"表示显式无编号,不加此类以免空框)
+  if (data.attrs.number === "abc" || data.attrs.number === "123") cls.push("quiz-block--numbered");
   const block = container.createDiv({ cls: cls.join(" ") });
   const single = !data.question.includes("\n");
   block.createDiv({ cls: single ? "quiz-question quiz-question--single" : "quiz-question" });
