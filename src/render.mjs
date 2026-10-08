@@ -21,8 +21,11 @@ export function buildBlock(container, data) {
   // 编号小框仅在明确要显示编号时出现("none"表示显式无编号,不加此类以免空框)
   if (data.attrs.number === "abc" || data.attrs.number === "123") cls.push("quiz-block--numbered");
   const block = container.createDiv({ cls: cls.join(" ") });
-  const single = !data.question.includes("\n");
-  block.createDiv({ cls: single ? "quiz-question quiz-question--single" : "quiz-question" });
+  // hideStem:绑定块不保留题干时不建题干区(避免空框)
+  if (data.hideStem !== true) {
+    const single = !data.question.includes("\n");
+    block.createDiv({ cls: single ? "quiz-question quiz-question--single" : "quiz-question" });
+  }
   const list = block.createDiv({ cls: "quiz-options" });
   for (const opt of data.options) {
     const optEl = list.createDiv({ cls: "quiz-option" });

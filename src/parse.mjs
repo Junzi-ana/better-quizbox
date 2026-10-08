@@ -4,7 +4,7 @@
 
 /* ------------------------------ 块属性(指令) -------------------------------- */
 
-export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind"];
+export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind", "copy", "stem"];
 const ATTR_PAIR_RE = /([A-Za-z]+)\s*[:=]\s*([^,;\n]*)/g;
 
 // 解析一整条 HTML 注释指令:返回 [{key,val}, ...]
@@ -48,6 +48,12 @@ export function normalizeNumberToken(v) {
   return null;
 }
 
+// bind/copy 引用值的合法性:4..10 位 base36 id,可带 -N 同文件序号后缀;合法返回规范化值
+export function normalizeRefToken(v) {
+  const t = v.trim().toLowerCase();
+  return /^[a-z0-9]{4,10}(?:-\d+)?$/.test(t) ? t : null;
+}
+
 /* ---------------------------------- 解析 ---------------------------------- */
 
 // 选项行: [ ] 未选  [c] 正确(源码遗留的 [w]/[r] 一律按未选处理)
@@ -65,17 +71,26 @@ export function trimBlankEdges(lines) {
 
 export function parseQuiz(source) {
   const raw = source.split("\n");
-  const attrs = { mode: null, shuffle: null, number: null, id: null, bind: null };
+  const attrs = { mode: null, shuffle: null, number: null, id: null, binding: null, stem: null };
   const content = [];
   for (const line of raw) {
     const attrsList = parseAttrComment(line);
     if (attrsList.length) {
       // 每个属性首个生效;属性注释行一律不进入内容
       for (const a of attrsList) {
+        if (a.key === "bind" || a.key === "copy") {
+          // bind/copy:值为目标 id 引用;只认合法格式;非法值不占用"首个生效"。
+          // 两者互斥,全块第一个合法的出现胜出,其余(bind/copy 混用/多个 id)忽略。
+          const legal = normalizeRefToken(a.val);
+          if (legal && !attrs.binding) attrs.binding = { type: a.key, target: legal };
+          continue;
+        }
+        if (a.val === "") continue; // 空值不占用"首个生效",后续同名属性仍可生效
         if (attrs[a.key] !== null) continue;
         if (a.key === "mode") attrs.mode = normalizeModeToken(a.val);
         else if (a.key === "shuffle") attrs.shuffle = normalizeBoolToken(a.val);
         else if (a.key === "number") attrs.number = normalizeNumberToken(a.val);
+        else if (a.key === "stem") attrs.stem = normalizeBoolToken(a.val);
         else attrs[a.key] = a.val;
       }
       continue;
@@ -168,9 +183,7 @@ export function randomOrder(options) {
   const arr = sourceOrder(options);
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
 }
@@ -183,10 +196,34 @@ export function signature(options) {
     .join("\u0002");
 }
 
-export function dynamicKey(attrs, options) {
-  return attrs.id || "sig:" + signature(options);
+// 整题签名:题干 + 选项(均为 parse 剥离 HTML 注释后的内容,天然不含标记)
+export function fullSignature(question, options) {
+  const q = question.trim().toLowerCase().replace(/\s+/g, " ");
+  return q + "\u0002" + signature(options);
 }
 
-export function staticBindKey(attrs, options) {
-  return attrs.bind || "sig:" + signature(options);
+/* ------------------------------ 自动 id(内容派生) ---------------------------- */
+// id = base36(0-9a-z,不分大小写) 的整题摘要,位数可调(设置 4..10,缺省 7):
+// 签名 = 题干 + 选项(parse 已剥离 HTML 注释行,天然不含标记),同一道题在任意文件/顺序下 id 相同。
+// 7 位时 36^7 ≈ 7.8e10 空间;同文件内偶发相同时由 idassign 加 -2/-3 后缀兜底。
+
+// FNV-1a 32 位,双种子各管哈希的一半
+function fnv1a(str, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
 }
+
+// 内容签名 → 稳定 id(纯函数,同步);bits 为 id 位数(4..10)
+export function contentId(sig, bits = 7) {
+  const a = fnv1a(sig, 0x811c9dc5);
+  const b = fnv1a(sig, 0x1e17d5c0);
+  const n = (BigInt(a) << 32n) | BigInt(b);
+  // 2^64 在 base36 至多 13 位;补齐后取前 bits 位
+  return n.toString(36).padStart(13, "0").slice(0, bits);
+}
+
+// 整题内容签名:见上方 fullSignature(题干 + 选项)

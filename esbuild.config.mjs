@@ -40,7 +40,7 @@ await esbuild.build({
 	bundle: true,
 	external: ["obsidian"],
 	format: "cjs",
-	target: "es2018",
+	target: "es2020", // BigInt(内容 id 的哈希拼接)需要 es2020
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
