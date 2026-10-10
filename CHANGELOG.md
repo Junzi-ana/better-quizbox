@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3.0 — 2026-10-09
+
+- Block IDs are now stable counter numbers instead of content hashes: `<!-- id: ... -->` = file-name hash prefix + block number, with an adjustable code length (3–9; half goes to the hash, the other half to a zero-padded block number, odd lengths give the hash the extra digit). An id, once assigned, is never rewritten — editing a question's stem or options no longer changes its id, so `bind`/`copy` references never break and no reference-rewriting or deferred writes are needed.
+- Block IDs are assigned only to blocks that lack one (new blocks). A "Renumber all block IDs" button renumbers every block per file from 0, with a cross-file collision guard (shared id set skips numbers already taken by another file sharing the same hash prefix).
+- Editing is now stable: the plugin performs zero disk writes when you edit an existing question (the id doesn't change), so the front card no longer flickers from plugin-triggered re-renders. Option order is preserved while you edit the stem/explanations (carried over when the option set is unchanged); a bound card shows the target's current content and order and only rebuilds once per change.
+- Card transient state (order + answers) is keyed by file+id (stable), so editing the stem keeps the order and previous answers; changing the actual options re-shuffles as before.
+
 ## 3.2.0 — 2026-10-08
 
 - Automatic block IDs: each quiz block gets a content-derived base36 id (letters + digits, case-insensitive, length 4–10 default 7) written as `<!-- id: ... -->`. Editing a block updates its id on the next save. The hash covers the whole question (stem + options), so any change to the question changes the id.

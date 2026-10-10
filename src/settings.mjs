@@ -1,5 +1,5 @@
 /* Better Quiz Box — 设置栏(全中文)
- * 四项设置:块属性显式给出时始终优先;设置只影响之后的渲染。
+ * 设置只在块属性未显式给出时生效;块属性显式始终优先;设置只影响之后的渲染。
  */
 
 import { PluginSettingTab, Setting } from "obsidian";
@@ -9,7 +9,7 @@ export const DEFAULT_SETTINGS = {
 	defaultShuffle: true,
 	defaultNumbering: "none",
 	idMode: "manual", // manual | auto
-	idLength: 7, // 4..10
+	idLength: 7, // 3..9
 	defaultBindStem: false, // bind 是否保留题干(默认不保留)
 	debug: false, // 调试日志
 };
@@ -68,7 +68,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("题目 id 分配")
-			.setDesc("自动:按整道题内容生成 id 并写入文件;题面改动后 id 随之更新")
+			.setDesc("自动:给没有 id 的 quiz 块分配计数器编号;已分配的 id 永不改写,内容编辑不影响 id")
 			.addDropdown((drop) =>
 				drop
 					.addOption("manual", "手动")
@@ -77,16 +77,15 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.idMode = value;
 						await this.plugin.saveSettings();
-						this.plugin.syncIdAutomation();
 					})
 			);
 
 		new Setting(containerEl)
-			.setName("id 位数")
-			.setDesc("新分配的 id 长度(4–10 位)。已分配的 id 不变,直到编辑该题或全库重编号")
+			.setName("id 码长")
+			.setDesc("3–9 位;一半文件名 hash、另一半块号定长,奇数时多一位 hash(如码长 7 = hash 4 + 块号 3)。只影响之后新分配的块,已分配的 id 不变")
 			.addSlider((slider) =>
 				slider
-					.setLimits(4, 10, 1)
+					.setLimits(3, 9, 1)
 					.setValue(this.plugin.settings.idLength)
 					.setDynamicTooltip()
 					.onChange(async (value) => {
@@ -109,7 +108,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("全库重新编号")
-			.setDesc("重写所有笔记里 quiz 块的 id(仅动 quiz 块)")
+			.setDesc("所有笔记里 quiz 块的 id 按计数器连续重编(引用旧 id 的 bind/copy 自动同步)")
 			.addButton((btn) =>
 				btn.setButtonText("重新编号").onClick(() => {
 					if (window.confirm("将重写全库 quiz 块的 id,确认执行?")) {

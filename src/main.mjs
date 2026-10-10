@@ -1,10 +1,12 @@
 /* Better Quiz Box
  * 交互式多项选择题块插件(纯瞬态作答;Markdown/LaTeX 题干、选项与解析;
- * static / immediate / non-immediate 三种模式;SR 复习友好,支持顺序绑定与翻面复原)
+ * static / immediate / non-immediate 三种模式;SR 复习友好,支持绑定镜像与翻面复原)
  *
  * 源码风格与包结构:
- *   src/parse.mjs    解析层(块属性注释 + quiz 源文本解析 + 顺序/配对辅助)
- *   src/state.mjs    状态层(顺序注册表 + 卡片级瞬态作答存储,内存不落盘)
+ *   src/parse.mjs    解析层(块属性注释 + quiz 源文本解析 + 源顺序/随机顺序辅助)
+ *   src/idassign.mjs 自动 id 分配(内容无关的计数器编号,见下)
+ *   src/idindex.mjs  全库 id 索引(正向查表 + 反向引用 + 活动绑定 + 绑定解析)
+ *   src/state.mjs    状态层(卡片级瞬态作答存储,内存不落盘)
  *   src/render.mjs   渲染层(DOM 构建 + 视觉状态机 + 点击交互)
  *   src/main.mjs     入口(代码块处理器注册 + 插件主体,本文件)
  *
@@ -21,11 +23,15 @@
  *     <!-- mode: static | immediate | non-immediate -->  缺省 immediate
  *     <!-- shuffle: on | off -->                         缺省 on(仅动态块)
  *     <!-- number: abc | 123 | none -->                  缺省 none(按显示顺序编号)
- *     <!-- id: 名字 -->        动态块标识(缺省按"选项+正确项"自动配对)
- *     <!-- bind: 名字 -->      静态块绑定某动态块的打乱顺序
+ *     <!-- id: 名字 -->        块标识(计数器自动分配或手动写;一旦分配永不改写)
+ *     <!-- bind: 名字 -->      只读镜像某道题(默认藏题干,可选 stem: on)
+ *     <!-- copy: 名字 -->      可作答镜像某道题,保留其模式
+ *     <!-- stem: on | off -->  绑定是否保留题干
  *
- * 顺序与作答复原:动态块缺省自动打乱,每次"新开"(新容器/换卡/重开文件)重新随机;
- * 同卡翻面重渲染保持原顺序与作答。静态块绑定后与对应动态块同步顺序。
+ * id 语义:计数器编号(文件名 hash 前缀 + 块号),内容无关 → 编辑题面 id 不变、
+ * 引用永不失效 → 绑定/复制自动跟随目标最新内容,不重写、不闪。
+ * 顺序:动态块每次"新开"(新容器/换卡/重开文件/选项真变)重新随机;
+ * 同卡编辑题干不重摇(选项未变则顺序沿用);绑定块跟随目标当前显示顺序。
  */
 
 import {
@@ -43,22 +49,22 @@ import {
 } from "./state.mjs";
 import { buildBlock, applyVisuals, dynamicClick } from "./render.mjs";
 import { DEFAULT_SETTINGS, QuizBoxSettingTab } from "./settings.mjs";
-import { applyAutoIds, rewriteRefsInText, collectIdMap } from "./idassign.mjs";
+import { assignCounterIds, renumberFile, collectIdMap, rewriteRefsInText, fileIdOf, hashLenOf } from "./idassign.mjs";
 import {
   baseOf,
-  lookupId,
   setOrderOf,
   getRefFiles,
   replaceFileEntries,
   buildIndex,
   removeFileEntries,
   clearIndex,
-  aliasId,
   registerLiveBinding,
   notifyLiveBindings,
   resolveBinding,
   setLogHook,
-  stats
+  stats,
+  usedBlockNums,
+  allIds
 } from "./idindex.mjs";
 import { Plugin, MarkdownRenderer, debounce, Notice, TFile } from "obsidian";
 
@@ -103,12 +109,20 @@ function registerQuizProcessor(plugin) {
 
     const display = bound || data;
     const file = ctx.sourcePath;
-    // 卡片瞬态的 key 用"剥掉属性行的内容"计算:写/改 id 注释行不算内容变化,
-    // 同卡翻面照常复用顺序与作答(写 id 不引发洗牌);真换卡/重开(容器变)仍重新洗牌。
-    const contentKey =
-      file + "\u0000" + display.question + "\u0001" +
-      display.options.map((o) => o.state + "\u0001" + o.text).join("\u0002") +
-      (display.details !== undefined ? "\u0001" + display.details : "");
+    // 卡片瞬态 key:有稳定 id 的块用 "文件+id"(计数器 id 永不变 → 编辑题干/选项不换 key,
+    // 顺序与作答自然延续);无 id 的块(绑定显示/手写无 id)回落内容 key。
+    // 选项真的变了由 optSig 守卫判定(见 resolveCard),与新开一样重摇。
+    const hasId = display.attrs.id ? true : false;
+    const cardKey = hasId
+      ? file + "\u0000" + baseOf(display.attrs.id)
+      : file + "\u0000" + display.question + "\u0001" +
+        display.options.map((o) => o.state + "\u0001" + o.text).join("\u0002") +
+        (display.details !== undefined ? "\u0001" + display.details : "");
+    // 选项集签名(忽略顺序):选项增删/改文本/改正确态 → 守卫判定为重开(重摇)
+    const optSig = display.options
+      .map((o) => o.state + "\u0001" + o.text.trim().toLowerCase().replace(/\s+/g, " "))
+      .sort()
+      .join("\u0002");
     const container = stableContainer(el);
     const isDynamic = display.attrs.mode !== "static";
     const isMulti =
@@ -124,19 +138,19 @@ function registerQuizProcessor(plugin) {
       order = display.order || sourceOrder(display.options);
       if (isDynamic) {
         // copy 可作答:接卡片瞬态,重渲后恢复作答
-        const res = resolveCard(contentKey, container);
+        const res = resolveCard(cardKey, container, optSig);
         if (res.redraw && res.entry) states = res.entry.states || null;
-        else saveCard(contentKey, container, order, null);
+        else saveCard(cardKey, container, order, null, optSig);
       }
     } else if (isDynamic) {
-      const res = resolveCard(contentKey, container);
+      const res = resolveCard(cardKey, container, optSig);
       if (res.redraw && res.entry) {
         order = res.entry.order || sourceOrder(display.options);
         states = res.entry.states || null;
       } else {
-        // 新开(新容器/换卡/重开文件)重新随机
+        // 新开(新容器/换卡/重开文件/选项真变了)重新随机
         order = display.attrs.shuffle !== false ? randomOrder(display.options) : sourceOrder(display.options);
-        saveCard(contentKey, container, order, null);
+        saveCard(cardKey, container, order, null, optSig);
       }
       // 刷新索引里该题的当前显示顺序,并广播给跟随它的绑定/复制块(它们重读最新顺序)
       if (display.attrs.id && order) {
@@ -178,7 +192,7 @@ function registerQuizProcessor(plugin) {
     if (isDynamic && order) reorderRowsTo(block, order);
     else if (bound && order) reorderRowsTo(block, order);
     applyVisuals(block, display, display.attrs.number);
-    noteRendered(contentKey, container);
+    noteRendered(cardKey, container);
 
     // 动态块绑定点击(copy 命中时同样可作答,瞬态只在本容器)
     if (isDynamic) {
@@ -187,7 +201,7 @@ function registerQuizProcessor(plugin) {
           const oi = parseInt(optEl.dataset.optIdx, 10);
           const opt = display.options.find((x) => x.optIdx === oi);
           if (!opt) return;
-          dynamicClick(block, display, opt, contentKey, container, order, isMulti);
+          dynamicClick(block, display, opt, cardKey, container, order, isMulti);
         });
       });
     }
@@ -264,108 +278,38 @@ export default class QuizBlockPlugin extends Plugin {
   }
 
   /* —— 单文件变更管线 —— */
-  // 唯一入口:modify 事件(debounce 节流)。原则:每个文件每轮最多写盘一次——
-  //   1) 自动模式重算 id(纯文本,不写盘) → old→new 映射
-  //   2) 引用改写(纯文本,含本文件的 bind/copy 一并算入) → 本文件"最终文本"
-  //   3) 本文件一次写盘;别处被改写的文件也各写一次
-  //   4) 置换索引 → 精准通知绑定块重渲
+  // 唯一入口:modify 事件(debounce 节流)。
+  // id 是计数器编号,内容编辑不改任何 id → 本管线对"编辑已有题"零写盘(正面不额外闪),
+  // 只在"出现没有 id 的新块"时才写盘一次赋号。索引始终随文本更新 → 绑定块内容跟随。
   async handleFileChange(file) {
     if (!(file instanceof TFile) || file.extension !== "md") return;
-    // 防递归(保险):自己写盘触发的 modify 事件不再进管线(管线内已自足)
-    if (this._processing?.has(file.path)) {
-      this.debugLog("skip in-flight:", file.path);
-      return;
-    }
+    if (this._processing?.has(file.path)) return;
     if (!this._processing) this._processing = new Set();
     this._processing.add(file.path);
     try {
       const text = await this.app.vault.read(file);
       if (!text.includes("```quiz")) return;
 
+      const codeLen = this.settings.idLength || 7;
+      const fileId = fileIdOf(file.path, hashLenOf(codeLen));
       let finalText = text;
-      let idMap = new Map();
-      // 自动模式:重算 id。只在真的有变化时才算改写——无变化时不写盘,
-      // 否则写盘触发 modify 再进管线,自我喂养成写盘风暴(V10 的教训)。
       if (this.settings.idMode === "auto") {
-        const res = applyAutoIds(text, this.settings.idLength);
+        const res = assignCounterIds(text, fileId, usedBlockNums(fileId), allIds(), codeLen);
         if (res.changed) {
-          idMap = collectIdMap(text, res.text);
           finalText = res.text;
-          this.debugLog("id rewrite:", file.path, JSON.stringify([...idMap]));
+          this.debugLog("assign ids:", file.path, "added", res.added);
+          await this.app.vault.process(file, () => res.text); // 仅新建块赋号写盘,编辑已有题不触发
         }
       }
 
-      // 引用改写(纯文本计算,含本文件;必须先于写盘/通知,否则绑定块拿旧 id 查不到 → 空块)
-      let others = new Map(); // 别处文件路径 → 新文本
-      if (idMap.size) {
-        const rewrites = await this.buildRefRewrites(idMap);
-        for (const [p, newText] of rewrites.perFile) {
-          if (p !== file.path) others.set(p, newText);
-          else finalText = newText; // 本文件的绑定引用并入同一次写盘
-        }
-      }
-
-      // 编辑器占用本文件时不写盘(写盘会和输入缓冲打架 → id 翻转/闪烁):
-      // 只更新内存索引为新文本 + 留旧→新别名(绑定块在内存中完全一致,旧引用继续可解析)。
-      // 用户切走/关闭文件时 Obsidian 落盘触发 modify,那时再真实写盘。
-      if (finalText !== text && this.app.workspace.activeEditor?.file?.path === file.path) {
-        this.debugLog("defer write (editor active):", file.path, JSON.stringify([...idMap]));
-        for (const [o, n] of idMap) aliasId(o, n);
-        const changedBases = replaceFileEntries(file.path, finalText);
-        if (changedBases.size) notifyLiveBindings(changedBases);
-        return;
-      }
-
-      // 本文件一次写盘(finalText = id 重算 + 本文件引用改写的合并结果)
-      if (finalText !== text) await this.app.vault.process(file, () => finalText);
-
-      // 别处被改写的文件各写一次(改写结果已在纯文本阶段算好)
-      for (const [p, newText] of others) {
-        const f2 = this.app.vault.getAbstractFileByPath(p);
-        if (!(f2 instanceof TFile)) continue;
-        if (this._processing.has(p)) continue;
-        this._processing.add(p);
-        try {
-          await this.app.vault.modify(f2, newText);
-          const bases = replaceFileEntries(p, newText);
-          if (bases.size) notifyLiveBindings(bases);
-        } finally {
-          this._processing.delete(p);
-        }
-      }
-
-      // 置换本文件索引(此刻文本已含全部新 id/新引用) → 精准通知绑定块
-      const changedBases = replaceFileEntries(file.path, finalText);
-      if (changedBases && changedBases.size) notifyLiveBindings(changedBases);
+      // 索引随最终文本更新;id 不变,选项未变沿袭顺序 → 绑定块引用的仍是同一题,内容/顺序正确
+      const changedIds = replaceFileEntries(file.path, finalText);
+      if (changedIds.size) notifyLiveBindings(changedIds);
     } catch (e) {
       console.error("[better-quizbox] fileChange:", e);
     } finally {
       this._processing?.delete(file.path);
     }
-  }
-
-  // 引用改写(纯文本计算,不写盘):对反查表列出的每个文件读出文本、算出新文本。
-  // 返回 { perFile: Map(文件路径 → 改写后文本) };写盘由调用方决定(同文件合并,防多重刷新)。
-  async buildRefRewrites(map) {
-    const perFile = new Map();
-    if (!map || !map.size) return { perFile };
-    const filesToFix = new Set();
-    for (const oldBase of map.keys()) {
-      for (const p of getRefFiles(oldBase)) filesToFix.add(p);
-    }
-    this.debugLog("refRewrite:", JSON.stringify([...map]), "→ files:", [...filesToFix]);
-    for (const p of filesToFix) {
-      const f = this.app.vault.getAbstractFileByPath(p);
-      if (!(f instanceof TFile)) continue;
-      try {
-        const t = await this.app.vault.read(f);
-        const res = rewriteRefsInText(t, map);
-        if (res.changed) perFile.set(p, res.text);
-      } catch (e) {
-        console.error("[better-quizbox] refRewrite " + p + ":", e);
-      }
-    }
-    return { perFile };
   }
 
     /* —— vault 监听(常驻,唯一入口) —— */
@@ -388,39 +332,53 @@ export default class QuizBlockPlugin extends Plugin {
     ];
   }
 
-  /* —— 设置栏按钮:全库重编号(内容派生,保证文件内唯一;只动 quiz 块) —— */
+  /* —— 设置栏按钮:全库重新编号(计数器连续重编;破坏性,仅按钮用) —— */
   async renumberAllIds() {
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.extension === "md");
     new Notice("Better Quiz Box: 扫描 " + files.length + " 个笔记…");
     let touchedFiles = 0;
     let touchedBlocks = 0;
     const globalMap = new Map();
+    // 第一遍:各文件重排 id(从 0 连续),收集旧→新映射。
+    // used = 全库当前 id 快照,跨文件共享并累积 → 前缀相同时自动错号,杜绝跨文件重复 id。
+    const codeLen = this.settings.idLength || 7;
+    const used = allIds();
     for (const f of files) {
       try {
         const text = await this.app.vault.read(f);
         if (!text.includes("```quiz")) continue;
-        const res = applyAutoIds(text, this.settings.idLength);
+        const fileId = fileIdOf(f.path, hashLenOf(codeLen));
+        const res = renumberFile(text, fileId, codeLen, used);
         if (!res.changed) continue;
-        // 收集旧→新映射(索引仍持旧值),供随后改写所有引用
         const fileMap = collectIdMap(text, res.text);
         for (const [o, n] of fileMap) {
           if (!globalMap.has(o)) globalMap.set(o, n);
         }
         await this.app.vault.process(f, () => res.text);
         touchedFiles++;
-        touchedBlocks += res.blockChanges;
+        touchedBlocks += res.count;
       } catch (e) {
         console.error("[better-quizbox] renumber " + f.path + ":", e);
       }
     }
-    // 引用了旧 id 的 bind/copy 块同步改写(纯文本计算,统一写盘),随后整体重建索引
-    const rewrites = await this.buildRefRewrites(globalMap);
-    for (const [p, newText] of rewrites.perFile) {
-      const f = this.app.vault.getAbstractFileByPath(p);
-      if (f instanceof TFile) await this.app.vault.modify(f, newText);
+    // 第二遍:改写引用了旧 id 的 bind/copy 块(跨文件查反查表)
+    const filesToFix = new Set();
+    for (const oldId of globalMap.keys()) {
+      for (const p of getRefFiles(oldId)) filesToFix.add(p);
+    }
+    for (const p of filesToFix) {
+      try {
+        const f = this.app.vault.getAbstractFileByPath(p);
+        if (!(f instanceof TFile)) continue;
+        const t = await this.app.vault.read(f);
+        const res = rewriteRefsInText(t, globalMap);
+        if (res.changed) await this.app.vault.modify(f, res.text);
+      } catch (e) {
+        console.error("[better-quizbox] renumber refs " + p + ":", e);
+      }
     }
     await this.rebuildIndex();
-    new Notice("Better Quiz Box: 已重编号 " + touchedBlocks + " 块,分布于 " + touchedFiles + " 个文件。");
+    new Notice("Better Quiz Box: 已重新编号 " + touchedBlocks + " 块,分布于 " + touchedFiles + " 个文件。");
   }
 
   onunload() {

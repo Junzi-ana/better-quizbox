@@ -1,6 +1,6 @@
 {
 	"name": "better-quizbox",
-	"version": "3.2.0",
+	"version": "3.3.0",
 	"description": "Interactive multiple-choice quiz blocks for Obsidian (transient-only, Markdown/LaTeX options, static/immediate/non-immediate modes, SR-review friendly)",
 	"main": "main.js",
 	"type": "commonjs",

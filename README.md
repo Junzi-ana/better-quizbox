@@ -27,7 +27,7 @@ What is $\int_0^1 x \, dx$?
 - Three answer modes: instant judgement, answer-then-check, or a plain static display.
 - Questions, options, and explanations accept multi-line Markdown and LaTeX.
 - Automatic option shuffling, with a stable order shared between card faces.
-- Automatic content-derived block IDs, with `bind` / `copy` blocks that mirror a question elsewhere and follow its order.
+- Automatic stable block IDs, with `bind` / `copy` blocks that mirror a question elsewhere and follow its order.
 - Answers never touch the note file — closing the file resets everything.
 - Works in reading view and flashcard review; in the editor it shows as a normal code block.
 
@@ -58,7 +58,7 @@ Attributes are whole-line HTML comments, one per line, placed anywhere inside th
 | `mode` | `static` / `immediate` / `non-immediate` | `immediate` | Answering behavior |
 | `shuffle` | `on` / `off` | `on` | Option shuffling (dynamic blocks only) |
 | `number` | `abc` / `123` / `none` | `none` | Display A/B/C or 1/2/3 labels |
-| `id` | auto (content-derived) or any name | derived from question + options | Identifies a block; auto-assigned and rewritten when the question changes |
+| `id` | auto (counter) or any name | file hash + block number | Identifies a block; auto-assigned to blocks lacking one and never rewritten when the question changes |
 | `bind` | a block id | — | Renders a read-only copy of that question (stem hidden by default) |
 | `copy` | a block id | — | Renders an editable copy of that question, keeping its mode |
 | `stem` | `on` / `off` | `off` for `bind`, `on` for `copy` | Keep the target's stem |
@@ -69,7 +69,7 @@ Duplicate options (same text, ignoring case and surrounding whitespace) are dedu
 
 ### Block IDs, bind and copy
 
-Every dynamic block can carry an `id`. In auto mode (default) the id is derived from the whole question (stem + options), so editing a question rewrites its id — and every `bind`/`copy` pointing at the old id is updated automatically across the vault (via a reverse-reference index, no full-vault scans). A "Renumber all block IDs" button in the settings does the same for the whole vault at once.
+Every dynamic block can carry an `id`. In auto mode (default) a block that has no `id` gets a stable counter id = file-name hash prefix + block number (code length adjustable, default 7). An id, once assigned, is never rewritten: editing the stem or options doesn't change it, so `bind`/`copy` references never break. A "Renumber all block IDs" button in the settings renumbers every block per file from 0 and updates references to match.
 
 A `bind` block renders the target question read-only (correct options highlighted); by default the stem is hidden — add `<!-- stem: on -->` to keep it. A `copy` block renders an editable copy that keeps the target's own mode, so you can answer it independently. Both follow the target's current shuffled option order. An id that can't be resolved simply renders the block as a normal question. `bind`/`copy` blocks themselves get no id.
 
@@ -88,10 +88,10 @@ Settings → Better Quiz Box; explicit block attributes always win:
 - **Default answer mode** — `immediate` / `non-immediate` / `static`
 - **Shuffle options by default** — on / off
 - **Default option numbering** — none / A B C / 1 2 3
-- **Block id assignment** — manual / auto (auto derives ids from content and keeps references in sync)
-- **Id length** — 4–10 characters (default 7)
+- **Block id assignment** — manual / auto (auto assigns a stable counter id to each block lacking one; ids are never rewritten, so editing a question doesn't change its id)
+- **Id code length** — 3–9 characters (default 7); half is the file-name hash, the other half a zero-padded block number, odd lengths give the hash the extra digit
 - **Keep stem in bind blocks** — off by default
-- **Renumber all block IDs** — rewrite every id in the vault from its content
+- **Renumber all block IDs** — renumber every block per file from 0 (references are updated to match; cross-file collisions are avoided automatically)
 
 Changes apply to newly rendered blocks; already-rendered ones stay as they are. A block can always override a default with its own attribute, e.g. `<!-- number: none -->` turns numbering off for that block even when a default is set.
 
@@ -147,7 +147,7 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - 三种作答模式：即时判分、先答后查、纯静态展示。
 - 题干、选项、解析均支持多行 Markdown 与 LaTeX。
 - 选项自动打乱，正反面共享同一顺序。
-- 自动内容派生的块 id；`bind` / `copy` 块可在他处镜像某道题并跟随其顺序。
+- 自动稳定的块 id（计数器编号，永不改写）；`bind` / `copy` 块可在他处镜像某道题并跟随其顺序。
 - 作答不触碰笔记文件——关闭文件即自动复位。
 - 阅读视图与闪卡复习中可用；编辑器中显示为普通代码块。
 
@@ -178,7 +178,7 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 | `mode` | `static` / `immediate` / `non-immediate` | `immediate` | 作答行为 |
 | `shuffle` | `on` / `off` | `on` | 打乱选项（仅动态块） |
 | `number` | `abc` / `123` / `none` | `none` | 显示 A/B/C 或 1/2/3 编号 |
-| `id` | 自动（由内容派生）或任意名字 | 由题干+选项派生 | 块的标识；自动分配，题面变化时自动改写 |
+| `id` | 自动（计数器编号）或任意名字 | 文件 hash + 块号 | 块的标识；自动分配给没有 id 的块，题面变化时永不改写 |
 | `bind` | 某个块的 id | — | 只读渲染该题（默认隐藏题干） |
 | `copy` | 某个块的 id | — | 可作答渲染该题，保留其模式 |
 | `stem` | `on` / `off` | `bind` 为 `off`、`copy` 为 `on` | 是否保留目标题干 |
@@ -189,7 +189,7 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 ### 块 id、bind 与 copy
 
-每个动态块都可以带一个 `id`。自动模式（缺省）下 id 由整道题（题干+选项）派生，所以改题面就会改写它的 id——引用旧 id 的 `bind`/`copy` 会跨库自动同步（反向引用索引，无需全库扫描）。设置里的「全库重新编号」按钮可以对整个库一次性做同样的事。
+每个动态块都可以带一个 `id`。自动模式（缺省）下，没有 id 的块会得到一个**稳定的计数器编号** = 文件名 hash 前缀 + 块号（码长可调，缺省 7）。id 一旦分配**永不改写**：改题干或选项都不会改变它，所以 `bind`/`copy` 引用永远不会失效。设置里的「全库重新编号」按钮会逐文件从 0 重编所有块，并同步更新引用。
 
 `bind` 块只读渲染目标题（正确项高亮），默认隐藏题干，写 `<!-- stem: on -->` 可保留；`copy` 块渲染可作答的副本，保留目标自身的模式，可以独立作答。两者都跟随目标题当前的打乱顺序。id 无法解析时，该块按普通题渲染。`bind`/`copy` 块本身不分配 id。
 
@@ -208,10 +208,10 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - **默认作答模式**——`immediate` / `non-immediate` / `static`
 - **默认打乱选项**——开 / 关
 - **默认选项编号**——无 / ABC / 123
-- **题目 id 分配**——手动 / 自动（自动按内容派生 id 并同步引用）
-- **id 长度**——4–10 位（缺省 7）
+- **题目 id 分配**——手动 / 自动（自动给没有 id 的块分配稳定的计数器编号；id 永不改写，改题面不变）
+- **id 码长**——3–9 位（缺省 7）；一半文件名 hash、一半块号定长，奇数时多一位 hash
 - **bind 块保留题干**——缺省关
-- **全库重新编号**——按内容重写库内所有块的 id
+- **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开）
 
 改动只影响之后渲染的块，已在页面上的不变。块内可以用自己的属性覆盖缺省，例如设了默认编号后，单个块写 `<!-- number: none -->` 即可关掉编号。
 

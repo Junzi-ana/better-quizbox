@@ -1,7 +1,7 @@
 {
 	"id": "better-quizbox",
 	"name": "Better Quiz Box",
-	"version": "3.2.0",
+	"version": "3.3.0",
 	"minAppVersion": "0.15.0",
 	"description": "Interactive multiple-choice quiz blocks with transient-only answering (notes are never modified), Markdown/LaTeX support, static/immediate/non-immediate modes, option shuffling, and order binding for spaced-repetition review.",
 	"author": "Junzi-ana",
