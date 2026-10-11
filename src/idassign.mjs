@@ -35,7 +35,8 @@ export function hashLenOf(codeLen) {
   return Math.ceil(codeLen / 2);
 }
 
-// 文件路径 → base36 hash 全值(定长 13 位),截取 hashLen 位作前缀;同一文件同一长度前缀稳定
+// 文件路径 → base36 hash 全值,取尾部 hashLen 位作前缀(base36 低位分布均匀,不同文件天然不同);
+// 同一文件同一长度前缀稳定;短前缀总是长前缀的尾部后缀(嵌套)
 export function fileIdOf(filePath, hashLen) {
   let h = 0x811c9dc5;
   const s = String(filePath || "");
@@ -43,8 +44,8 @@ export function fileIdOf(filePath, hashLen) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619) >>> 0;
   }
-  const full = h.toString(36).padStart(13, "0");
-  return full.slice(0, hashLen);
+  // ponytail: 取尾部而非头部——head 被 padStart 补 0 污染(曾致全库前缀都是 0000)
+  return h.toString(36).padStart(hashLen, "0").slice(-hashLen);
 }
 
 // 块号格式化:定长 numLen 位(0..10^numLen-1);超位自然变长
@@ -118,31 +119,53 @@ export function renumberFile(text, fileId, codeLen, takenIds) {
   const blocks = scanQuizBlocks(text);
   // 先算每块原有的 id 行行号(此时行号是原文本的;后续插入会波及后续块)
   const idLines = blocks.map((b) => findIdAttrLine(lines, b.start, b.end));
-  let changed = false;
-  let count = 0;
+
+  // 收集参与重排的块(有选项、非绑定)及其旧号码
+  const part = [];
   for (let bi = 0; bi < blocks.length; bi++) {
     const parsed = parseQuiz(blocks[bi].source);
-    if (!parsed.options.length || parsed.attrs.binding) continue; // 不参与的块不动
+    if (!parsed.options.length || parsed.attrs.binding) continue;
     const idLine = idLines[bi];
-    let n = 0;
-    while (takenIds && takenIds.has(fileId + blockNum(n, numLen))) n++;
-    const id = fileId + blockNum(n, numLen);
-    if (takenIds) takenIds.add(id);
+    let oldN = null;
+    let oldRaw = "";
     if (idLine >= 0) {
       const pm = /\bid\s*[:=]\s*([^,;\n]*?)(?=\s*--\s*>|[;,]|\s*$)/.exec(lines[idLine]);
-      const oldVal = pm ? pm[1].trim() : "";
-      if (oldVal !== id) {
-        lines[idLine] = replaceIdValue(lines[idLine], id);
-        changed = true;
-        count++;
-      }
+      oldRaw = pm ? pm[1].trim() : "";
+      const om = new RegExp("^" + fileId + "(\\d+)$").exec(oldRaw);
+      if (om) oldN = parseInt(om[1], 10);
+    }
+    part.push({ bi, idLine, oldN, oldRaw });
+  }
+
+  // 占用 = takenIds 里与本文件同前缀的号;本文件旧号先释放再分配(否则每次点击全体上漂,
+  // 永远"有改动"→全库重写→渲染卡死)。异形旧 id(手写历史格式)不占新编号体系,逐渐被替换。
+  const used = new Set();
+  for (const k of (takenIds || [])) {
+    if (!k.startsWith(fileId)) continue;
+    const n = parseInt(k.slice(fileId.length), 10);
+    if (!isNaN(n)) used.add(n);
+  }
+  for (const p of part) if (p.oldN != null) used.delete(p.oldN);
+
+  let changed = false;
+  let count = 0;
+  for (const p of part) {
+    let n = 0;
+    while (used.has(n)) n++;
+    used.add(n);
+    const id = fileId + blockNum(n, numLen);
+    if (p.oldRaw === id) continue; // 已是目标号:零改动(重编号幂等,重复点击不再重写)
+    if (takenIds) takenIds.add(id);
+    if (p.idLine >= 0) {
+      lines[p.idLine] = replaceIdValue(lines[p.idLine], id);
+      changed = true;
+      count++;
     } else {
-      const pos = blocks[bi].start + 1;
+      const pos = blocks[p.bi].start + 1;
       lines.splice(pos, 0, "<!-- id: " + id + " -->");
-      for (let bj = bi + 1; bj < blocks.length; bj++) {
-        blocks[bj].start++;
-        blocks[bj].end++;
-        if (idLines[bj] >= pos) idLines[bj]++;
+      for (const q of part) {
+        if (q.bi > p.bi) { blocks[q.bi].start++; blocks[q.bi].end++; }
+        if (q.idLine >= pos) q.idLine++;
       }
       changed = true;
       count++;

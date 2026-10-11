@@ -4,7 +4,7 @@
 
 /* ------------------------------ 块属性(指令) -------------------------------- */
 
-export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind", "copy", "stem"];
+export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind", "copy", "stem", "submit", "reset"];
 const ATTR_PAIR_RE = /([A-Za-z]+)\s*[:=]\s*([^,;\n]*)/g;
 
 // 解析一整条 HTML 注释指令:返回 [{key,val}, ...]
@@ -48,6 +48,14 @@ export function normalizeNumberToken(v) {
   return null;
 }
 
+// 重置方式: auto(切页重渲染即重置) / manual(批改状态保留直到按重置按钮);非法值返回 null(视为未设置)
+export function normalizeResetToken(v) {
+  const t = v.toLowerCase().replace(/[\s_]+/g, "");
+  if (t === "manual") return "manual";
+  if (t === "auto") return "auto";
+  return null;
+}
+
 // bind/copy 引用值的合法性:4..10 位 base36 id,可带 -N 同文件序号后缀;合法返回规范化值
 export function normalizeRefToken(v) {
   const t = v.trim().toLowerCase();
@@ -71,7 +79,7 @@ export function trimBlankEdges(lines) {
 
 export function parseQuiz(source) {
   const raw = source.split("\n");
-  const attrs = { mode: null, shuffle: null, number: null, id: null, binding: null, stem: null };
+  const attrs = { mode: null, shuffle: null, number: null, id: null, binding: null, stem: null, submit: null, reset: null };
   const content = [];
   for (const line of raw) {
     const attrsList = parseAttrComment(line);
@@ -91,6 +99,8 @@ export function parseQuiz(source) {
         else if (a.key === "shuffle") attrs.shuffle = normalizeBoolToken(a.val);
         else if (a.key === "number") attrs.number = normalizeNumberToken(a.val);
         else if (a.key === "stem") attrs.stem = normalizeBoolToken(a.val);
+        else if (a.key === "submit") attrs.submit = normalizeBoolToken(a.val);
+        else if (a.key === "reset") attrs.reset = normalizeResetToken(a.val);
         else attrs[a.key] = a.val;
       }
       continue;

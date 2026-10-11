@@ -62,6 +62,8 @@ Attributes are whole-line HTML comments, one per line, placed anywhere inside th
 | `bind` | a block id | — | Renders a read-only copy of that question (stem hidden by default) |
 | `copy` | a block id | — | Renders an editable copy of that question, keeping its mode |
 | `stem` | `on` / `off` | `off` for `bind`, `on` for `copy` | Keep the target's stem |
+| `submit` | `on` / `off` | `on` | Submit-and-grade button in `non-immediate` mode (off = pure selection, no grading) |
+| `reset` | `auto` / `manual` | `auto` | Auto: resetting happens on page switches; Manual: the graded state stays until you press Reset |
 
 Several attributes can share one comment: `<!-- mode: static, number: abc -->`.
 
@@ -79,7 +81,7 @@ A `bind` block renders the target question read-only (correct options highlighte
 |------|----------|-------------|
 | `static` | Correct options highlighted; the block is not clickable | Notes and answer sheets |
 | `immediate` | Every click is judged at once: green ✓ or red ✗ | Quick self-testing |
-| `non-immediate` | Clicks only highlight selections; with two or more `[c]` options the block becomes multi-select | Exam-style practice |
+| `non-immediate` | Select options, then press the bottom-right **Submit** button to grade: chosen-wrong turns red ✗, missed-correct is revealed green ✓, a verdict line shows the correct answers and your picks; the block locks until Reset. Single- and multiple-answer both work (two or more `[c]` options = multi-select); the explanation expands automatically | Exam-style practice |
 
 ## Settings
 
@@ -88,10 +90,14 @@ Settings → Better Quiz Box; explicit block attributes always win:
 - **Default answer mode** — `immediate` / `non-immediate` / `static`
 - **Shuffle options by default** — on / off
 - **Default option numbering** — none / A B C / 1 2 3
+- **Grading (non-immediate)** — submit button on/off; reset behavior (`auto` = reset on page switch, `manual` = keep the graded state until Reset); show reset button after grading
+- **Verdict text** — customizable templates for correct/wrong verdicts; `{ans}` inserts the correct-answer letters, `{pick}` your selection
+- **Button appearance (collapsible)** — per-button accent-blend ratio, hover brighten/darken slider, foreground color (auto / anti-auto / white / black), font weight, one-click swap
 - **Block id assignment** — manual / auto (auto assigns a stable counter id to each block lacking one; ids are never rewritten, so editing a question doesn't change its id)
 - **Id code length** — 3–9 characters (default 7); half is the file-name hash, the other half a zero-padded block number, odd lengths give the hash the extra digit
+- **Renumber all block IDs** — renumber every block per file from 0 (references are updated to match; cross-file collisions are avoided automatically; idempotent — repeated clicks finish instantly)
+- **Renumber exclude list** — one path per line; excluded folders/files are skipped when renumbering
 - **Keep stem in bind blocks** — off by default
-- **Renumber all block IDs** — renumber every block per file from 0 (references are updated to match; cross-file collisions are avoided automatically)
 
 Changes apply to newly rendered blocks; already-rendered ones stay as they are. A block can always override a default with its own attribute, e.g. `<!-- number: none -->` turns numbering off for that block even when a default is set.
 
@@ -182,6 +188,8 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 | `bind` | 某个块的 id | — | 只读渲染该题（默认隐藏题干） |
 | `copy` | 某个块的 id | — | 可作答渲染该题，保留其模式 |
 | `stem` | `on` / `off` | `bind` 为 `off`、`copy` 为 `on` | 是否保留目标题干 |
+| `submit` | `on` / `off` | `on` | `non-immediate` 模式的提交按钮（关 = 纯作答不出答案） |
+| `reset` | `auto` / `manual` | `auto` | 自动：切页即重置；手动：批改结果保留到按重置键 |
 
 多条属性可以共用一行注释：`<!-- mode: static, number: abc -->`。
 
@@ -199,7 +207,7 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 |------|------|----------|
 | `static` | 高亮正确选项，块不可点击 | 笔记、答案页 |
 | `immediate` | 每次点击立即判分：对绿 ✓、错红 ✗ | 快速自测 |
-| `non-immediate` | 点击仅高亮所选；有两个及以上 `[c]` 时转为多选 | 考试式练习 |
+| `non-immediate` | 选中选项后按右下角**提交**按钮批改：错选红 ✗、漏选绿 ✓ 揭示，横幅显示正确答案与你的选择；批改后锁定到重置。单选多选都行（两个及以上 `[c]` 转多选）；解析自动展开 | 考试式练习 |
 
 ## 设置
 
@@ -208,10 +216,14 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - **默认作答模式**——`immediate` / `non-immediate` / `static`
 - **默认打乱选项**——开 / 关
 - **默认选项编号**——无 / ABC / 123
+- **批改（先选后查）**——提交按钮开关；重置方式（自动 = 切页即重置，手动 = 保留到按重置）；批改后是否显示重置按钮
+- **批改文案**——判对/判错模板可自定义；`{ans}` = 正确答案字母、`{pick}` = 你的选择
+- **按钮外观（折叠）**——两按钮各自的强调色混合比例、悬停幅度（左右拖动）、字色（自动/反自动/白/黑）、字重，以及一键交换配置
 - **题目 id 分配**——手动 / 自动（自动给没有 id 的块分配稳定的计数器编号；id 永不改写，改题面不变）
 - **id 码长**——3–9 位（缺省 7）；一半文件名 hash、一半块号定长，奇数时多一位 hash
+- **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开；幂等，重复点击瞬时完成）
+- **重新编号屏蔽目录**——每行一个路径，重新编号时跳过
 - **bind 块保留题干**——缺省关
-- **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开）
 
 改动只影响之后渲染的块，已在页面上的不变。块内可以用自己的属性覆盖缺省，例如设了默认编号后，单个块写 `<!-- number: none -->` 即可关掉编号。
 

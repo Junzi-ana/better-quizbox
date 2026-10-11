@@ -79,6 +79,8 @@ function registerQuizProcessor(plugin) {
     if (data.attrs.mode == null) data.attrs.mode = plugin.settings.defaultMode || "immediate";
     if (data.attrs.shuffle == null) data.attrs.shuffle = plugin.settings.defaultShuffle !== false;
     if (data.attrs.number == null) data.attrs.number = plugin.settings.defaultNumbering || "none";
+    if (data.attrs.submit == null) data.attrs.submit = plugin.settings.submitEnabled !== false;
+    if (data.attrs.reset == null) data.attrs.reset = plugin.settings.resetMode || "auto";
 
     // —— 绑定渲染(bind/copy):查索引命中则渲染目标题,未命中按普通题 ——
     let bound = null;
@@ -129,6 +131,18 @@ function registerQuizProcessor(plugin) {
       display.attrs.mode === "non-immediate" &&
       display.options.filter((o) => o.state === "c").length > 1;
     const block = buildBlock(el, display);
+    // 提交/重置配置落显示对象:bind/copy 克隆不带这些属性,用宿主块已填缺省的 data.attrs 补齐
+    // (display === data 时为空操作)。display.submit/reset 为规范化值,setupActions 直接读。
+    if (display.attrs.submit == null) display.attrs.submit = data.attrs.submit;
+    if (display.attrs.reset == null) display.attrs.reset = data.attrs.reset;
+    display.submit = display.attrs.submit !== false;
+    display.reset = display.attrs.reset === "manual" ? "manual" : "auto";
+    display.showReset = plugin.settings.showReset !== false;
+    // 批改文案模板(设置可调):{ans}=正确答案字母 {pick}=你的选择字母
+    display.verdictOk = plugin.settings.verdictOk || "回答正确！";
+    display.verdictBad = plugin.settings.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}";
+    // sticky = 手动重置模式:跨容器保留作答/批改态(切页回来停留在答案状态,直到按重置)
+    const sticky = display.reset === "manual";
 
     // —— 决定顺序 ——
     let order;
@@ -137,29 +151,36 @@ function registerQuizProcessor(plugin) {
       // 绑定/复制:跟随原题洗牌后的实际显示顺序(currentOrder);未渲染过回落其源顺序
       order = display.order || sourceOrder(display.options);
       if (isDynamic) {
-        // copy 可作答:接卡片瞬态,重渲后恢复作答
-        const res = resolveCard(cardKey, container, optSig);
-        if (res.redraw && res.entry) states = res.entry.states || null;
-        else saveCard(cardKey, container, order, null, optSig);
+        // copy 可作答:接卡片瞬态,重渲后恢复作答/批改态
+        const res = resolveCard(cardKey, container, optSig, sticky);
+        if (res.redraw && res.entry) {
+          states = res.entry.states || null;
+          display.submitted = !!res.entry.submitted;
+        }
+        else saveCard(cardKey, container, order, null, optSig, false);
       }
     } else if (isDynamic) {
-      const res = resolveCard(cardKey, container, optSig);
+      const res = resolveCard(cardKey, container, optSig, sticky);
       if (res.redraw && res.entry) {
         order = res.entry.order || sourceOrder(display.options);
         states = res.entry.states || null;
+        display.submitted = !!res.entry.submitted;
       } else {
         // 新开(新容器/换卡/重开文件/选项真变了)重新随机
         order = display.attrs.shuffle !== false ? randomOrder(display.options) : sourceOrder(display.options);
-        saveCard(cardKey, container, order, null, optSig);
+        saveCard(cardKey, container, order, null, optSig, false);
       }
-      // 刷新索引里该题的当前显示顺序,并广播给跟随它的绑定/复制块(它们重读最新顺序)
-      if (display.attrs.id && order) {
-        setOrderOf(display.attrs.id, order);
+      // 刷新索引里该题的当前显示顺序;仅当顺序真变了才广播(否则每个绑定重渲触发无限重渲风暴)
+      if (display.attrs.id && order && setOrderOf(display.attrs.id, order)) {
+        plugin.debugLog("order changed:", display.attrs.id, JSON.stringify(order));
         notifyLiveBindings(new Set([baseOf(display.attrs.id)]));
       }
     } else {
       order = sourceOrder(display.options);
     }
+
+    // 批改流上下文(提交/重置按钮与批改态保存共用;此刻 order 已定稿,值捕获即可)
+    const ctrl = { key: cardKey, container, order, optSig, rerender: () => runRender(source, el, ctx) };
 
     // 渲染题干、选项、解析(Markdown / LaTeX)
     const tasks = [];
@@ -191,7 +212,7 @@ function registerQuizProcessor(plugin) {
     // 顺序应用
     if (isDynamic && order) reorderRowsTo(block, order);
     else if (bound && order) reorderRowsTo(block, order);
-    applyVisuals(block, display, display.attrs.number);
+    applyVisuals(block, display, display.attrs.number, ctrl);
     noteRendered(cardKey, container);
 
     // 动态块绑定点击(copy 命中时同样可作答,瞬态只在本容器)
@@ -201,7 +222,7 @@ function registerQuizProcessor(plugin) {
           const oi = parseInt(optEl.dataset.optIdx, 10);
           const opt = display.options.find((x) => x.optIdx === oi);
           if (!opt) return;
-          dynamicClick(block, display, opt, cardKey, container, order, isMulti);
+          dynamicClick(block, display, opt, ctrl, isMulti);
         });
       });
     }
@@ -217,6 +238,15 @@ function registerQuizProcessor(plugin) {
 export default class QuizBlockPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // 兼容旧数据:补齐嵌套按钮配置;悬停从字符串(bright/dark)迁到数值(-1..1)
+    this.settings.btnSubmit = Object.assign({}, DEFAULT_SETTINGS.btnSubmit, this.settings.btnSubmit);
+    this.settings.btnReset = Object.assign({}, DEFAULT_SETTINGS.btnReset, this.settings.btnReset);
+    for (const k of ["btnSubmit", "btnReset"]) {
+      const c = this.settings[k];
+      if (typeof c.hover !== "number") c.hover = c.hover === "dark" ? -0.12 : 0.12;
+      if (c.hover === "string") c.hover = 0; // 双保险
+    }
+    this.applyButtonVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     setLogHook((...a) => this.debugLog(...a));
     // 处理器先注册(块立即可渲;绑定 miss 的也登记,live 补渲兜底)
@@ -254,6 +284,34 @@ export default class QuizBlockPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  /* —— 按钮外观:设置 → CSS 变量(body 上,渲染层直接消费) —— */
+  applyButtonVars() {
+    if (typeof document === "undefined") return; // 非 Electron 环境(测试沙箱)静默跳过
+    // 常规设计习惯:接近纯白(#fafafa)/接近纯黑(#1a1a1a),不用 #fff/#000 那么彻底
+    const WHITE = "#fafafa";
+    const BLACK = "#1a1a1a";
+    const fgColor = (cfg, dark) => {
+      if (cfg.fg === "white") return WHITE;
+      if (cfg.fg === "black") return BLACK;
+      // 自动 = 深色主题近白/浅色主题近黑(按用户主题,不读按钮深浅);反自动 = 相反
+      const anti = cfg.fg === "anti";
+      return (dark !== anti) ? WHITE : BLACK;
+    };
+    const hoverFactor = (v) => 1 + (typeof v === "number" ? v : 0); // -1..1 → 0..2,0=不变
+    const s = this.settings.btnSubmit || {};
+    const r = this.settings.btnReset || {};
+    const dark = document.body.classList.contains("theme-dark");
+    const set = (k, v) => document.body.style.setProperty(k, v);
+    set("--bqb-submit-mix", String(s.mix != null ? s.mix : 30));
+    set("--bqb-submit-bright", String(hoverFactor(s.hover)));
+    set("--bqb-submit-color", fgColor(s, dark));
+    set("--bqb-submit-weight", s.bold ? "600" : "400");
+    set("--bqb-reset-mix", String(r.mix != null ? r.mix : 10));
+    set("--bqb-reset-bright", String(hoverFactor(r.hover)));
+    set("--bqb-reset-color", fgColor(r, dark));
+    set("--bqb-reset-weight", r.bold ? "600" : "400");
+  }
+
   // 调试日志(设置栏开关,默认关):排查问题时在控制台看 [bqb] 行
   debugLog(...args) {
     if (this.settings?.debug) console.log("[bqb]", ...args);
@@ -282,6 +340,7 @@ export default class QuizBlockPlugin extends Plugin {
   // id 是计数器编号,内容编辑不改任何 id → 本管线对"编辑已有题"零写盘(正面不额外闪),
   // 只在"出现没有 id 的新块"时才写盘一次赋号。索引始终随文本更新 → 绑定块内容跟随。
   async handleFileChange(file) {
+    if (this._renumbering) return; // 重编号全程屏蔽自身触发的 modify(防 28 文件连锁风暴)
     if (!(file instanceof TFile) || file.extension !== "md") return;
     if (this._processing?.has(file.path)) return;
     if (!this._processing) this._processing = new Set();
@@ -334,7 +393,23 @@ export default class QuizBlockPlugin extends Plugin {
 
   /* —— 设置栏按钮:全库重新编号(计数器连续重编;破坏性,仅按钮用) —— */
   async renumberAllIds() {
-    const files = this.app.vault.getMarkdownFiles().filter((f) => f.extension === "md");
+    if (this._renumbering) return; // 防双击/并发重入
+    this._renumbering = true;
+    try {
+      await this._renumberAllIdsInner();
+    } finally {
+      this._renumbering = false;
+    }
+  }
+
+  async _renumberAllIdsInner() {
+    // 屏蔽目录:每行一个 vault 内相对路径(目录或单文件均可);匹配的文件跳过重编
+    const excl = String(this.settings.renumberExclude || "")
+      .split("\n")
+      .map((s) => s.trim().replace(/^\/+|\/+$/g, ""))
+      .filter(Boolean);
+    const isExcluded = (p) => excl.some((x) => p === x || p.startsWith(x + "/"));
+    const files = this.app.vault.getMarkdownFiles().filter((f) => f.extension === "md" && !isExcluded(f.path));
     new Notice("Better Quiz Box: 扫描 " + files.length + " 个笔记…");
     let touchedFiles = 0;
     let touchedBlocks = 0;
@@ -357,6 +432,7 @@ export default class QuizBlockPlugin extends Plugin {
         await this.app.vault.process(f, () => res.text);
         touchedFiles++;
         touchedBlocks += res.count;
+        if (touchedFiles % 5 === 0) await new Promise((r) => setTimeout(r, 0)); // 让出主线程,UI 不僵
       } catch (e) {
         console.error("[better-quizbox] renumber " + f.path + ":", e);
       }

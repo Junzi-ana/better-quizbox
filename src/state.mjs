@@ -18,7 +18,8 @@ export function reorderRowsTo(block, order) {
 /* --------------------- 卡片级瞬态(顺序+作答,内存,不落盘) --------------------- */
 // key:有稳定 id 的块 = 源文件 + "\u0000" + id(id 是计数器编号,内容编辑不变 → 顺序/作答自然延续);
 //     无 id 的块 = 源文件 + 代码块原文(回落内容匹配)。
-// entry = { at, container, order, states: Map(optIdx->state)|null, optSig }
+// entry = { at, container, order, states: Map(optIdx->state)|null, optSig, submitted? }
+// (sticky 与否由 resolveCard 调用方按当前设置/块属性实时传入,不落在 entry 上 → 改设置即时生效)
 // 复原语义:同一容器内上一渲染即本题(连续重渲染/SR 翻面)才复用顺序/作答;
 // 选项真变了(optSig 变)按新开处理重新随机;其余(重开文件/换卡)同样重来。
 const cardStore = new Map();
@@ -47,7 +48,7 @@ export function stableContainer(el) {
   return null;
 }
 
-export function resolveCard(key, container, optSig) {
+export function resolveCard(key, container, optSig, sticky) {
   const entry = cardStore.get(key);
   if (!entry) return { redraw: false };
   if (Date.now() - entry.at > CARD_TTL_MS) {
@@ -59,6 +60,11 @@ export function resolveCard(key, container, optSig) {
     cardStore.delete(key);
     return { redraw: false };
   }
+  // 手动重置模式(sticky):跨容器仍恢复作答/批改态/顺序(切页回来停留在答案状态,直到按重置)
+  if (sticky && entry.container !== container) {
+    entry.container = container;
+    return { redraw: true, entry };
+  }
   const redraw =
     entry.container === container && isConsecutive(key, container);
   if (!redraw) {
@@ -68,14 +74,19 @@ export function resolveCard(key, container, optSig) {
   return { redraw: true, entry };
 }
 
-export function saveCard(key, container, order, states, optSig) {
+export function saveCard(key, container, order, states, optSig, submitted) {
   if (cardStore.size > 500) {
     const now = Date.now();
     for (const [k, v] of cardStore) {
       if (now - v.at > CARD_TTL_MS) cardStore.delete(k);
     }
   }
-  cardStore.set(key, { at: Date.now(), container, order, states, optSig });
+  cardStore.set(key, { at: Date.now(), container, order, states, optSig, submitted });
+}
+
+// 重置按钮用:清掉本题瞬态,下次渲染全新重摇(重置 = 刷新)
+export function dropCard(key) {
+  cardStore.delete(key);
 }
 
 // 插件卸载时清空全部瞬态(卡片存储 + 上一渲染记录)

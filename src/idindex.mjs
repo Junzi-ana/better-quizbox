@@ -38,9 +38,13 @@ export function lookupId(id) {
 }
 
 // 源题渲染时注册当前显示顺序(选项数不匹配则忽略)
+// 返回 true 表示存储的顺序真的变了(调用方据此决定是否广播绑定块重渲,防渲染风暴)
 export function setOrderOf(id, order) {
   const e = idIndex.get(baseOf(id));
-  if (e && order && order.length === e.options.length) e.currentOrder = order;
+  if (!e || !order || order.length !== e.options.length) return false;
+  if (e.currentOrder && e.currentOrder.join(",") === order.join(",")) return false;
+  e.currentOrder = order;
+  return true;
 }
 
 /* --------------- 反向引用 --------------- */
@@ -192,17 +196,51 @@ export function registerLiveBinding(target, handle) {
 }
 
 // 通知重渲;changedIds 省略时通知全部,否则只通知命中的 id。断连条目惰性回收。
+// 重入防护(防渲染风暴):重渲过程中再触发的 notify 不立即执行,合并进待办队列
+// 下一拍统一收敛;链式触发深度超过 3 层直接丢弃(正常流永远不会到 3 层)。
+let flushing = false;
+let pendingKeys = null; // null = 全量待办
+let pendingTimer = null;
+let chainDepth = 0;
+
+function schedulePendingFlush() {
+  if (pendingTimer || typeof setTimeout !== "function") return;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    if (chainDepth >= 3) { pendingKeys = null; chainDepth = 0; return; }
+    chainDepth++;
+    const k = pendingKeys;
+    pendingKeys = null;
+    notifyLiveBindings(k);
+  }, 0);
+}
+
 export function notifyLiveBindings(changedIds) {
-  let rerendered = 0;
-  for (const [k, s] of liveBindings) {
-    if (changedIds && changedIds.size && !changedIds.has(k)) continue;
-    for (const h of [...s]) {
-      let alive = false;
-      try { alive = h.alive(); } catch (e) { alive = false; }
-      if (!alive) { s.delete(h); continue; }
-      try { h.rerender(); rerendered++; } catch (e) { s.delete(h); }
+  if (flushing) {
+    // 合并待办:全量(null)优先级最高,一旦出现就吞并所有定点;否则把定点并入集合
+    if (pendingKeys !== null && changedIds) {
+      for (const k of changedIds) pendingKeys.add(k);
+    } else {
+      pendingKeys = null; // 全量待办覆盖一切
     }
-    if (!s.size) liveBindings.delete(k);
+    schedulePendingFlush();
+    return;
+  }
+  flushing = true;
+  let rerendered = 0;
+  try {
+    for (const [k, s] of liveBindings) {
+      if (changedIds && changedIds.size && !changedIds.has(k)) continue;
+      for (const h of [...s]) {
+        let alive = false;
+        try { alive = h.alive(); } catch (e) { alive = false; }
+        if (!alive) { s.delete(h); continue; }
+        try { h.rerender(); rerendered++; } catch (e) { s.delete(h); }
+      }
+      if (!s.size) liveBindings.delete(k);
+    }
+  } finally {
+    flushing = false;
   }
   log("notifyLiveBindings:", changedIds ? [...changedIds] : "*all*", "→ rerendered", rerendered);
 }

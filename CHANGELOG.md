@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.4.0 — 2026-10-11
+
+- New submit-and-grade flow for `non-immediate` mode (its main use): after selecting options, a Submit button appears at the bottom-right of the block. Pressing it grades the answer — chosen-wrong options turn red ✗, missed-correct ones are revealed green ✓ — expands the explanation, shows a verdict line, and locks the block until reset. Works for both single-answer and multiple-answer questions.
+- Configurable grading: Reset behavior is selectable per plugin/block (`<!-- reset: auto|manual -->`). Auto resets the question whenever the note is re-rendered (page switches); Manual keeps the graded state (and your selections) across views until you press Reset, which re-randomizes and clears the block.
+- Fully customizable verdict text in settings (`{ans}` = correct-answer letters, `{pick}` = your-selection letters), so translations and phrasing are up to you.
+- Button appearance settings: per-button accent-color blend ratio, hover brighten/darken amount (-1..1 slider), foreground color (auto / anti-auto / white / black, using near-white/near-black designer tones), font weight, and a one-click swap of the two buttons' configurations. Buttons use Obsidian theme variables so they adapt to any theme.
+- Settings panel reorganized into titled groups (Answering, Grading, Question IDs, Others) with collapsible sections for testing/tuning items.
+- Renumber-all-IDs: added an exclude-list setting (paths per line) so protected folders/files are skipped during renumbering; renumbering is now idempotent (already-correct ids cause zero writes, so repeated clicks finish instantly instead of rewriting the whole vault) and yields to the UI thread in batches.
+- Fixed the file-hash prefix bug where every file's prefix collapsed to `000…` (padding leaked into the sliced prefix); prefixes now come from the tail of the base36 digest and spread properly across files.
+- Hardened live-binding notifications: order broadcasts fire only when the displayed order actually changed, notifications coalesce recursively with a chain-depth cap, and self-triggered modify events are suppressed during bulk renumbering — eliminates the render-storm freeze when editing with many bound blocks.
+- Bind/copy block-attribute parsing extended with `submit` and `reset` keys (illegal values claim no slot; case-insensitive).
+
 ## 3.3.0 — 2026-10-09
 
 - Block IDs are now stable counter numbers instead of content hashes: `<!-- id: ... -->` = file-name hash prefix + block number, with an adjustable code length (3–9; half goes to the hash, the other half to a zero-padded block number, odd lengths give the hash the extra digit). An id, once assigned, is never rewritten — editing a question's stem or options no longer changes its id, so `bind`/`copy` references never break and no reference-rewriting or deferred writes are needed.

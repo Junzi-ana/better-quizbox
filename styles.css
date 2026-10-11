@@ -180,6 +180,117 @@
     color: #ffffff;
 }
 
+/* ===== 批改流(先选后查):右下角操作区 ===== */
+.quiz-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* 批改汇总横幅:正确绿 / 错误红,含正确答案与错漏统计 */
+.quiz-verdict {
+    display: none;
+    margin-right: auto;
+    font-size: 0.85em;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 4px;
+}
+
+.quiz-verdict--visible {
+    display: inline-block;
+}
+
+.quiz-verdict--ok {
+    background-color: #dcfce7;
+    color: #15803d;
+}
+
+.quiz-verdict--bad {
+    background-color: #fee2e2;
+    color: #b91c1c;
+}
+
+.theme-dark .quiz-verdict--ok {
+    background-color: #052e16;
+    color: #bbf7d0;
+}
+
+.theme-dark .quiz-verdict--bad {
+    background-color: #3f1115;
+    color: #fecaca;
+}
+
+/* 提交 / 重置按钮:全用 Obsidian 主题变量,自动适配任何主题明暗 */
+.quiz-action-btn {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* 提交 / 重置按钮:外观全部由设置面板经 CSS 变量驱动(main.mjs applyButtonVars 写入 body) */
+.quiz-action-btn {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 0.85em;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.quiz-action-btn--submit {
+    background-color: var(--background-modifier-hover); /* color-mix 不支持时兜底 */
+    border-color: var(--background-modifier-border-hover);
+    color: var(--bqb-submit-color, var(--text-normal));
+    font-weight: var(--bqb-submit-weight, 600);
+}
+
+.quiz-action-btn--reset {
+    background-color: var(--background-primary);
+    border-color: var(--background-modifier-border);
+    color: var(--bqb-reset-color, var(--text-muted));
+    font-weight: var(--bqb-reset-weight, 400);
+}
+
+/* 现代 Chromium:按设置比例把强调色掺入背景 */
+@supports (background: color-mix(in srgb, red 50%, blue)) {
+    .quiz-action-btn--submit {
+        background-color: color-mix(in srgb, var(--interactive-accent) calc(var(--bqb-submit-mix, 30) * 1%), var(--background-primary));
+        border-color: color-mix(in srgb, var(--interactive-accent) calc(var(--bqb-submit-mix, 30) * 1.5%), var(--background-modifier-border));
+    }
+
+    .quiz-action-btn--reset {
+        background-color: color-mix(in srgb, var(--interactive-accent) calc(var(--bqb-reset-mix, 10) * 1%), var(--background-primary));
+        border-color: color-mix(in srgb, var(--interactive-accent) calc(var(--bqb-reset-mix, 10) * 1.5%), var(--background-modifier-border));
+    }
+}
+
+.quiz-action-btn--submit:hover {
+    filter: brightness(var(--bqb-submit-bright, 1.12));
+}
+
+.quiz-action-btn--reset:hover {
+    filter: brightness(var(--bqb-reset-bright, 1.12));
+}
+
+/* 不参与渲染条件的按钮(未选中时提交 / 未批改或自动重置隐藏时重置) */
+.quiz-action-btn--hidden {
+    display: none;
+}
+
+/* 批改后遮罩点击:选项区仅剩视觉反馈,不可再作答(锁到重置) */
+.quiz-block--non-immediate .quiz-option--locked {
+    pointer-events: none;
+}
+
 /* ===== mode: static — 静态答案展示,整块不可交互 ===== */
 .quiz-block--static .quiz-option:hover {
     background-color: var(--background-primary);
@@ -216,4 +327,31 @@
 .cm-embed-block:has(.quiz-block) .edit-block-button {
     top: auto !important;
     bottom: 16px !important;
+}
+
+/* ===== 设置页折叠分组:标题可开合,默认收起(测试类样式) ===== */
+.bqb-fold-head .setting-item-info {
+    cursor: pointer;
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.bqb-fold-head .setting-item-info::after {
+    content: "▶";
+    position: absolute;
+    right: 0;
+    font-size: 0.7em;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+}
+
+.bqb-fold.bqb-open .bqb-fold-head .setting-item-info::after {
+    transform: rotate(90deg);
+}
+
+.bqb-fold-body {
+    border-left: 2px solid var(--background-modifier-border);
+    margin-left: 8px;
+    padding-left: 12px;
 }
