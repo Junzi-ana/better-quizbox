@@ -66,9 +66,131 @@ import {
   usedBlockNums,
   allIds
 } from "./idindex.mjs";
-import { Plugin, MarkdownRenderer, debounce, Notice, TFile } from "obsidian";
+import { Plugin, MarkdownRenderer, debounce, Notice, TFile, setIcon } from "obsidian";
 
 /* -------------------------------- 处理器注册 -------------------------------- */
+
+// ------------------------------ 收藏按钮 ------------------------------
+// 学 mathcraft 的定位:编辑视图 = 代码块外壳(.cm-embed-block)右上角绝对定位 + hover 淡入。
+// 关键差异——动态读位:Obsidian 的 "</>"(.edit-block-button)和 mathcraft 的引用钮
+// (.callout-copy-button/.equation-copy-button)常或临时占据右上角那排。我们用 MutationObserver
+// 监听外壳子节点(这些按钮出现/消失都引起 DOM 变化),实时测量当前最左侧占用者的左缘,
+// 把收藏钮排到它们整排的左侧;占用越多越往左挪,一个都没有时就贴近右缘。零硬编码坐标。
+const BTN_KEYS = [".edit-block-button", ".callout-copy-button", ".equation-copy-button", ".callout-refs-button"];
+
+// 收藏按钮全库注册表:key(卡片) → Set<按钮元素>。点击任一按钮切换收藏后,
+// 同步刷新所有同 key 按钮的星状态 → 编辑/阅读视图之间即时同步,不再等切页重渲染。
+const favButtons = new Map();
+
+function toggleFav(key, plugin, btn) {
+  const favs = new Set(plugin.settings.favorites || []);
+  const wasOn = favs.has(key);
+  if (wasOn) favs.delete(key);
+  else favs.add(key);
+  plugin.settings.favorites = [...favs];
+  plugin.saveSettings();
+  // 同步刷新本库所有同 key 按钮的星态(编辑/阅读视图一起变,即时互通);顺带惰性清扫断连按钮
+  const peers = favButtons.get(key);
+  if (peers) {
+    for (const b of [...peers]) {
+      if (!b.isConnected) { peers.delete(b); continue; }
+      applyFavState(b, !wasOn);
+    }
+    if (!peers.size) favButtons.delete(key);
+  }
+  new Notice(wasOn ? "已取消收藏" : "已收藏");
+}
+
+function applyFavState(btn, on) {
+  btn.toggleClass("bqb-fav-on", on);
+  btn.setAttribute("aria-label", on ? "取消收藏" : "收藏本题");
+}
+
+function registerFavBtn(key, btn) {
+  let s = favButtons.get(key);
+  if (!s) { s = new Set(); favButtons.set(key, s); }
+  s.add(btn);
+}
+
+// 编辑视图动态读位:测量当前最左占用者,收藏钮排到它左侧;dx 为设置栏横向微调叠加量。
+// 测不到占用者时也绝不盖住 "</>"(备预算位到 36px,即 </> 左缘近似位),宁左勿盖。
+function placeFavoriteOnEmbed(embed, btn, dx) {
+  const pad = 2; // 与右侧相邻兄弟的间隔
+  let leftmost = null;
+  for (const sel of BTN_KEYS) {
+    const el = embed.querySelector(sel);
+    if (el && el.offsetParent !== null) {
+      const r = el.getBoundingClientRect();
+      const er = embed.getBoundingClientRect().right;
+      const fromRight = er - r.left;
+      if (fromRight >= 0 && (leftmost === null || fromRight > leftmost)) leftmost = fromRight;
+    }
+  }
+  // 无占用者时:给 "</>" 预留 ~34px(其默认右缘位置),而不是贴 4px 盖住它
+  const right = leftmost === null ? 36 : leftmost + pad;
+  btn.style.right = (right + (dx || 0)) + "px";
+}
+
+function ensureEmbedObserver(embed, btn) {
+  if (embed.__bqbObs) return;
+  // 排位:立即 + 多帧兜底(启动时 "</>"/mathcraft 按钮常晚于本块注入,首帧可能测不到
+  // → 会误贴到它们的位置;延迟若干帧重排,以及监听子节点变化,覆盖晚出现/晚消失)
+  const reposition = () => {
+    if (btn.isConnected) placeFavoriteOnEmbed(embed, btn, embed.__bqbDX || 0);
+  };
+  reposition(); // 首次
+  for (const ms of [100, 300, 800]) setTimeout(reposition, ms); // 晚注入兜底
+  // 之后任一 </> 或引用钮增删/可见性变化都重排
+  let timer = null;
+  embed.__bqbObs = new MutationObserver(() => {
+    if (timer) return;
+    timer = setTimeout(() => { timer = null; reposition(); }, 50);
+  });
+  embed.__bqbObs.observe(embed, { childList: true, subtree: true, attributes: true });
+}
+
+function setupFavoriteButton(block, plugin, key) {
+  if (!key) return;
+  const embed = block.closest ? block.closest(".cm-embed-block") : null;
+  if (embed) {
+    let btn = embed.querySelector(":scope > .bqb-fav-btn");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      // 外观交给 Obsidian 内建 .clickable-icon(与 mathcraft 同款:无边框无背景、hover 变暗),
+      // 定位由我们绝对定位 + 动态读位(placeFavoriteOnEmbed)负责。
+      btn.className = "bqb-fav-btn clickable-icon";
+      btn.setAttribute("aria-label", "收藏本题");
+      setIcon(btn, "star");
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        toggleFav(key, plugin, btn);
+      });
+      embed.appendChild(btn);
+    }
+    embed.__bqbDX = plugin.settings.favBtn?.editDX || 0;
+    btn.toggleClass("bqb-fav-on", (plugin.settings.favorites || []).includes(key));
+    registerFavBtn(key, btn);
+    placeFavoriteOnEmbed(embed, btn, embed.__bqbDX);
+    ensureEmbedObserver(embed, btn);
+    return;
+  }
+  // 阅读视图:无 </>/引用占用,补位到编辑视图 </> 默认出现的格子
+  // (同基准 top/right var(--size-2-2)),dx/dy 由设置栏经 CSS 变量叠加。
+  let btn = block.querySelector(":scope > .bqb-fav-btn");
+  if (!btn) {
+    btn = block.createEl("button", { cls: "bqb-fav-btn clickable-icon", attr: { "aria-label": "收藏本题" } });
+    setIcon(btn, "star");
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      toggleFav(key, plugin, btn);
+    });
+  }
+  btn.toggleClass("bqb-fav-on", (plugin.settings.favorites || []).includes(key));
+  registerFavBtn(key, btn);
+}
 
 function registerQuizProcessor(plugin) {
   async function runRender(source, el, ctx) {
@@ -214,6 +336,8 @@ function registerQuizProcessor(plugin) {
     else if (bound && order) reorderRowsTo(block, order);
     applyVisuals(block, display, display.attrs.number, ctrl);
     noteRendered(cardKey, container);
+    // 收藏按钮(编辑=排进 "</>" 图标行;阅读=块内右上角悬浮;key 稳定 → 收藏跨渲染保留)
+    setupFavoriteButton(block, plugin, cardKey);
 
     // 动态块绑定点击(copy 命中时同样可作答,瞬态只在本容器)
     if (isDynamic) {
@@ -246,6 +370,8 @@ export default class QuizBlockPlugin extends Plugin {
       if (typeof c.hover !== "number") c.hover = c.hover === "dark" ? -0.12 : 0.12;
       if (c.hover === "string") c.hover = 0; // 双保险
     }
+    // 兼容旧数据:补齐收藏按钮微调配置
+    this.settings.favBtn = Object.assign({}, DEFAULT_SETTINGS.favBtn, this.settings.favBtn);
     this.applyButtonVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     setLogHook((...a) => this.debugLog(...a));
@@ -310,6 +436,11 @@ export default class QuizBlockPlugin extends Plugin {
     set("--bqb-reset-bright", String(hoverFactor(r.hover)));
     set("--bqb-reset-color", fgColor(r, dark));
     set("--bqb-reset-weight", r.bold ? "600" : "400");
+    // 收藏按钮:尺寸与阅读视图偏移走 CSS 变量;编辑横向微调由 JS(placeFavoriteOnEmbed)读 settings
+    const fb = this.settings.favBtn || {};
+    set("--bqb-fav-size", (fb.size != null ? fb.size : 24) + "px");
+    set("--bqb-fav-read-dx", (fb.readDX || 0) + "px");
+    set("--bqb-fav-read-dy", (fb.readDY || 0) + "px");
   }
 
   // 调试日志(设置栏开关,默认关):排查问题时在控制台看 [bqb] 行

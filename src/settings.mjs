@@ -16,6 +16,8 @@ export const DEFAULT_SETTINGS = {
 	renumberExclude: "", // 重新编号屏蔽目录(每行一个路径)
 	btnSubmit: { mix: 30, hover: 0, fg: "auto", bold: true }, // 提交按钮外观(混色%/悬停±/字色/字重)
 	btnReset: { mix: 10, hover: 0, fg: "auto", bold: false }, // 重置按钮外观
+	favorites: [], // 已收藏的块 key 列表(前端先行,后续做收藏夹视图)
+	favBtn: { size: 24, editDX: 0, readDX: 0, readDY: 0 }, // 收藏按钮微调:尺寸px/编辑横向/阅读横向/阅读纵向
 	idMode: "manual", // manual | auto
 	idLength: 7, // 3..9
 	defaultBindStem: false, // bind 是否保留题干(默认不保留)
@@ -294,6 +296,43 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					this.display(); // 重绘面板反映互换后的值
 				})
 			);
+
+		/* -------- 收藏按钮(折叠) -------- */
+		const favBody = fold("收藏按钮");
+
+		new Setting(favBody)
+			.setName("按钮尺寸")
+			.setDesc("按钮边长(px),图标随之缩放")
+			.addSlider((slider) =>
+				slider
+					.setLimits(16, 36, 1)
+					.setValue(this.plugin.settings.favBtn.size)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						this.plugin.settings.favBtn.size = v;
+						this.plugin.applyButtonVars();
+						await this.plugin.saveSettings();
+					})
+			);
+
+		const favNudge = (field, label, desc) => {
+			new Setting(favBody)
+				.setName(label)
+				.setDesc(desc)
+				.addText((text) =>
+					text
+						.setValue(String(this.plugin.settings.favBtn[field]))
+						.onChange(async (v) => {
+							const n = parseFloat(v);
+							this.plugin.settings.favBtn[field] = isNaN(n) ? 0 : n;
+							this.plugin.applyButtonVars();
+							await this.plugin.saveSettings();
+						})
+				);
+		};
+		favNudge("editDX", "编辑视图 · 横向微调", "在动态读位基础上再偏移(px,可负)");
+		favNudge("readDX", "阅读视图 · 横向微调", "距右缘额外偏移(px,可负)");
+		favNudge("readDY", "阅读视图 · 纵向微调", "距顶额外偏移(px,可负)");
 
 		/* ------------ 其他 ------------ */
 		new Setting(containerEl).setName("其他").setHeading();

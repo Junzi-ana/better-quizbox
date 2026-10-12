@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Favorite button: a star button on each quiz block (top-right in editing view, floating on the block in reading view). Click to favorite/unfavorite a question; favorites persist in plugin data. The button's position adapts to whoever occupies the corner (the native `</>` source button, quote buttons from other plugins) via live DOM measurement, and the star state syncs instantly between editing and reading views.
+
 ## 3.4.0 — 2026-10-11
 
 - New submit-and-grade flow for `non-immediate` mode (its main use): after selecting options, a Submit button appears at the bottom-right of the block. Pressing it grades the answer — chosen-wrong options turn red ✗, missed-correct ones are revealed green ✓ — expands the explanation, shows a verdict line, and locks the block until reset. Works for both single-answer and multiple-answer questions.

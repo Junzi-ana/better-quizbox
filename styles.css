@@ -8,6 +8,56 @@
     padding: 12px 16px;
     margin: 8px 0;
     background-color: var(--background-secondary);
+    position: relative; /* 收藏按钮的定位基准 */
+}
+
+/* ===== 收藏按钮 =====
+ * 职责分工:
+ *   外观(无边框/无背景/hover 变暗)→ Obsidian 内建 .clickable-icon 全权负责(与 mathcraft 同款),
+ *   我们不再写任何 border/background/hover 规则,避免和主题打架。
+ *   定位 → .bqb-fav-btn 只负责:绝对定位 + 尺寸 + 透明底兜底 + 收藏着色。
+ *   编辑视图 right 由 JS 动态读位(placeFavoriteOnEmbed)实时设置。
+ */
+.bqb-fav-btn {
+    position: absolute;
+    width: var(--bqb-fav-size, 24px);
+    height: var(--bqb-fav-size, 24px);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: transparent;
+    opacity: 0; /* 默认隐藏,进入块才淡入(与 mathcraft 同款) */
+    transition: opacity 0.1s ease;
+}
+
+/* 已收藏:填充强调色 */
+.bqb-fav-btn.bqb-fav-on {
+    color: var(--text-accent);
+}
+
+.bqb-fav-btn.bqb-fav-on svg {
+    fill: var(--text-accent);
+}
+
+/* 编辑视图:右上角;right 交给 JS */
+.cm-embed-block > .bqb-fav-btn {
+    top: var(--size-2-2, 4px);
+    right: 4px;
+}
+
+.cm-embed-block:hover > .bqb-fav-btn {
+    opacity: 1;
+}
+
+/* 阅读视图:复刻 "</>" 定位公式,叠加设置栏微调 */
+.quiz-block > .bqb-fav-btn {
+    top: calc(var(--size-2-2, 4px) + var(--bqb-fav-read-dy, 0px));
+    right: calc(var(--size-2-2, 4px) + var(--bqb-fav-read-dx, 0px));
+}
+
+.quiz-block:hover > .bqb-fav-btn {
+    opacity: 1;
 }
 
 .quiz-question {
