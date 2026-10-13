@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 3.5.0 — 2026-10-13
 
 - Favorite button: a star button on each quiz block (top-right in editing view, floating on the block in reading view). Click to favorite/unfavorite a question; favorites persist in plugin data. The button's position adapts to whoever occupies the corner (the native `</>` source button, quote buttons from other plugins) via live DOM measurement, and the star state syncs instantly between editing and reading views.
+- Favorites are registered by question id: a question and all of its `bind`/`copy` mirrors share the same favorite — favoriting (or unfavoriting) any of them counts for the source question. Favorites saved under the older card-key format are migrated automatically on load.
+- Favorites panel (experimental, opened from the star icon in the left ribbon): lists favorited questions grouped by source file with collapsible groups, per-group counts, the question id, and a single-line stem preview; clicking a row jumps to the source note. Unfavoriting from the panel keeps the star buttons on blocks in sync.
+- Factory presets: out-of-the-box defaults now match the author's daily configuration — `non-immediate` answer mode, A/B/C numbering, manual reset (graded state kept until Reset), auto id assignment with 6-char codes, stems kept in `bind` blocks, tuned submit/reset button appearance and verdict-text templates. Debug logging stays off and the renumber exclude list starts empty.
 
 ## 3.4.0 — 2026-10-11
 

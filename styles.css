@@ -405,3 +405,99 @@
     margin-left: 8px;
     padding-left: 12px;
 }
+
+/* ===== 收藏夹视图(测试用,侧栏唤出)===== */
+.bqb-favlist-head {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-bottom: 8px;
+}
+
+.bqb-favlist-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 5px 4px;
+    border-radius: 4px;
+}
+
+.bqb-favlist-row:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* 列表星:外观同样全权交给 .clickable-icon;这里只管常显与已收藏着色 */
+.bqb-favlist-star {
+    flex: none;
+    opacity: 1;
+    color: var(--text-accent);
+}
+
+.bqb-favlist-star svg {
+    fill: var(--text-accent);
+}
+
+.bqb-favlist-info {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.bqb-favlist-dead {
+    cursor: default;
+}
+
+.bqb-favlist-stem {
+    font-size: 0.9em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bqb-favlist-info:hover .bqb-favlist-stem {
+    color: var(--text-accent);
+}
+
+/* 元信息行:id 等宽芯片 */
+.bqb-favlist-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 1px;
+    font-size: 0.72em;
+    color: var(--text-muted);
+}
+
+.bqb-favlist-id {
+    font-family: var(--font-monospace);
+    background-color: var(--background-secondary);
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+/* 分组折叠:标题 = 文件路径 + 计数,点击开合(JS 只切 body 显隐,箭头交给此类) */
+.bqb-favgrp-head {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 0.78em;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 3px 2px;
+}
+
+.bqb-favgrp-head::before {
+    content: "▼";
+    font-size: 0.75em;
+    transition: transform 0.15s ease;
+}
+
+.bqb-favgrp-closed .bqb-favgrp-head::before {
+    transform: rotate(-90deg);
+}
+
+.bqb-favgrp-body {
+    border-left: 2px solid var(--background-modifier-border);
+    margin-left: 6px;
+    padding-left: 8px;
+    margin-bottom: 6px;
+}

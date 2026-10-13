@@ -52,6 +52,7 @@ import { DEFAULT_SETTINGS, QuizBoxSettingTab } from "./settings.mjs";
 import { assignCounterIds, renumberFile, collectIdMap, rewriteRefsInText, fileIdOf, hashLenOf } from "./idassign.mjs";
 import {
   baseOf,
+  lookupId,
   setOrderOf,
   getRefFiles,
   replaceFileEntries,
@@ -66,7 +67,7 @@ import {
   usedBlockNums,
   allIds
 } from "./idindex.mjs";
-import { Plugin, MarkdownRenderer, debounce, Notice, TFile, setIcon } from "obsidian";
+import { Plugin, ItemView, MarkdownRenderer, debounce, Notice, TFile, setIcon } from "obsidian";
 
 /* -------------------------------- 处理器注册 -------------------------------- */
 
@@ -98,6 +99,8 @@ function toggleFav(key, plugin, btn) {
     }
     if (!peers.size) favButtons.delete(key);
   }
+  // 收藏夹视图开着时同步刷新列表(星按钮/列表行两处入口都从这里过)
+  refreshFavViews(plugin);
   new Notice(wasOn ? "已取消收藏" : "已收藏");
 }
 
@@ -190,6 +193,101 @@ function setupFavoriteButton(block, plugin, key) {
   }
   btn.toggleClass("bqb-fav-on", (plugin.settings.favorites || []).includes(key));
   registerFavBtn(key, btn);
+}
+
+/* ------- 收藏夹视图(测试用:侧栏星图标唤出,列出全部收藏;仅测收藏逻辑,未来不一定保留) ------- */
+
+// 卡片 key 分隔符(与 state.mjs 约定一致:文件<0>id;无 id 块的内容串还含 <1>/<2> 分隔)。
+// 用 fromCharCode 而不写字面 \u 转义,避免源文件被塞进真实控制字符。
+const KEY_FILE_SEP = String.fromCharCode(0);
+const KEY_PART_SEP = String.fromCharCode(1);
+
+const FAV_VIEW_TYPE = "bqb-favorites";
+
+// 收藏夹开着时刷新列表(toggleFav 与侧栏唤出都会调)
+function refreshFavViews(plugin) {
+  const ws = plugin?.app?.workspace;
+  if (!ws || typeof ws.getLeavesOfType !== "function") return; // 测试沙箱无 workspace
+  for (const leaf of ws.getLeavesOfType(FAV_VIEW_TYPE)) {
+    if (leaf.view instanceof FavoritesView) leaf.view.renderList();
+  }
+}
+
+class FavoritesView extends ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+  getViewType() { return FAV_VIEW_TYPE; }
+  getDisplayText() { return "收藏夹(测试)"; }
+  getIcon() { return "star"; }
+  async onOpen() { this.renderList(); }
+  async onClose() {}
+  renderList() {
+    const root = this.contentEl;
+    root.empty();
+    const favs = [...new Set(this.plugin.settings.favorites || [])];
+    const head = root.createDiv({ cls: "bqb-favlist-head" });
+    if (!favs.length) {
+      head.setText("还没有收藏。点题目右上角的星收藏。");
+      return;
+    }
+    // 索引还没建好(layout-ready 前)会让全部收藏误判失效,提前说明而不是显示假"已失效"
+    head.setText(
+      (allIds().size === 0 ? "id 索引尚未就绪,稍后重开此面板。" : "已收藏 ") + favs.length + " 题"
+    );
+    // 分组:按源题所在文件折叠(查 id 索引);查不到的(已删除/无 id 匿名块)归入失效组垫底
+    const groups = new Map();
+    for (const key of favs) {
+      const entry = lookupId(key);
+      const g = entry ? entry.file : null;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push({ key, entry });
+    }
+    const sorted = [...groups.entries()].sort((a, b) => {
+      if (a[0] === null) return 1;
+      if (b[0] === null) return -1;
+      return a[0].localeCompare(b[0]);
+    });
+    for (const [file, rows] of sorted) {
+      const grp = root.createDiv({ cls: "bqb-favgrp" });
+      const grpHead = grp.createDiv({ cls: "bqb-favgrp-head" });
+      grpHead.setText((file === null ? "已失效/无 id" : file) + " · " + rows.length);
+      const body = grp.createDiv({ cls: "bqb-favgrp-body" });
+      grpHead.addEventListener("click", () => {
+        const hide = body.style.display !== "none";
+        body.style.display = hide ? "none" : "";
+        grp.toggleClass("bqb-favgrp-closed", hide); // 箭头旋转
+      });
+      for (const { key, entry } of rows) {
+        const row = body.createDiv({ cls: "bqb-favlist-row" });
+        const star = row.createEl("a", { cls: "bqb-favlist-star clickable-icon", attr: { "aria-label": "取消收藏" } });
+        setIcon(star, "star");
+        star.addClass("bqb-fav-on");
+        star.addEventListener("click", () => {
+          toggleFav(key, this.plugin);
+          this.renderList();
+        });
+        const info = row.createDiv({ cls: "bqb-favlist-info" });
+        // 缩略:题干单行截断
+        const stem = info.createDiv({ cls: "bqb-favlist-stem" });
+        stem.setText(entry ? (entry.question || "(无题干)") : "找不到源题(可能已删除)");
+        // 元信息行:id 等宽芯片;存活收藏整行可点跳转源文件(悬停 title 显完整路径)
+        const meta = info.createDiv({ cls: "bqb-favlist-meta" });
+        const idChip = meta.createSpan({ cls: "bqb-favlist-id" });
+        idChip.setText(key);
+        if (entry) {
+          info.title = entry.file;
+          info.addEventListener("click", () => {
+            const f = this.plugin.app.vault.getAbstractFileByPath(entry.file);
+            if (f) this.plugin.app.workspace.getLeaf(false).openFile(f);
+          });
+        } else {
+          info.addClass("bqb-favlist-dead");
+        }
+      }
+    }
+  }
 }
 
 function registerQuizProcessor(plugin) {
@@ -336,8 +434,14 @@ function registerQuizProcessor(plugin) {
     else if (bound && order) reorderRowsTo(block, order);
     applyVisuals(block, display, display.attrs.number, ctrl);
     noteRendered(cardKey, container);
+    // 收藏 key:按题目 id 登记(不带文件前缀)→ 源题与 bind/copy 镜像(渲染目标题,
+    // 其 attrs.id 被置 null)统一记账到同一 id 上:任一处收藏/取消收藏全部联动。
+    // 无 id 且无绑定的块回落内容 cardKey(无法靠 id 归属,维持原行为)。
+    const favKey = display.attrs.id
+      ? baseOf(display.attrs.id)
+      : (rawAttrs.binding ? baseOf(rawAttrs.binding.target) : cardKey);
     // 收藏按钮(编辑=排进 "</>" 图标行;阅读=块内右上角悬浮;key 稳定 → 收藏跨渲染保留)
-    setupFavoriteButton(block, plugin, cardKey);
+    setupFavoriteButton(block, plugin, favKey);
 
     // 动态块绑定点击(copy 命中时同样可作答,瞬态只在本容器)
     if (isDynamic) {
@@ -372,12 +476,28 @@ export default class QuizBlockPlugin extends Plugin {
     }
     // 兼容旧数据:补齐收藏按钮微调配置
     this.settings.favBtn = Object.assign({}, DEFAULT_SETTINGS.favBtn, this.settings.favBtn);
+    // 兼容旧数据:收藏以前按卡片 key 存(文件<NUL>id 或无 id 块的内容串);现按题目 id 登记。
+    // 迁移:含分隔符的 key 取最后一段(id);内容串(含 SOH 分隔)无法归属到 id,丢弃。
+    this.settings.favorites = [...new Set((this.settings.favorites || [])
+      .map((k) => String(k))
+      .map((k) => (k.includes(KEY_FILE_SEP) ? k.split(KEY_FILE_SEP).pop() : k))
+      .filter((k) => k && !k.includes(KEY_PART_SEP)))];
     this.applyButtonVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     setLogHook((...a) => this.debugLog(...a));
     // 处理器先注册(块立即可渲;绑定 miss 的也登记,live 补渲兜底)
     registerQuizProcessor(this);
     this.setupVaultListeners();
+    // 收藏夹视图(测试用):左侧栏星图标唤出
+    this.registerView(FAV_VIEW_TYPE, (leaf) => new FavoritesView(leaf, this));
+    this.addRibbonIcon("star", "收藏夹(测试)", async () => {
+      const ws = this.app.workspace;
+      const leaf = ws.getLeavesOfType(FAV_VIEW_TYPE)[0] || ws.getRightLeaf(false);
+      if (!leaf) return;
+      await leaf.setViewState({ type: FAV_VIEW_TYPE, active: true });
+      ws.revealLeaf(leaf);
+      if (leaf.view instanceof FavoritesView) leaf.view.renderList();
+    });
     // 索引必须等 vault 就绪(onload 时 getMarkdownFiles() 还是 0,过早建索引=空索引)
     this.app.workspace.onLayoutReady(async () => {
       // ensureIndexForMiss 已建过(启动竞态保险先跑)就不重复全库重建
@@ -595,5 +715,6 @@ export default class QuizBlockPlugin extends Plugin {
     }
     resetTransientState();
     clearIndex();
+    this.app.workspace.detachLeavesOfType(FAV_VIEW_TYPE);
   }
 }

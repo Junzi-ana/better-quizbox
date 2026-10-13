@@ -5,22 +5,23 @@
 import { PluginSettingTab, Setting } from "obsidian";
 
 export const DEFAULT_SETTINGS = {
-	defaultMode: "immediate",
-	defaultShuffle: true,
-	defaultNumbering: "none",
+	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
+	defaultMode: "non-immediate", // 主打模式:先选后查(单选多选)
+	defaultShuffle: true, // 打乱选项
+	defaultNumbering: "abc", // 默认选项编号 A B C
 	submitEnabled: true, // non-immediate 提交按钮(按下批改并显示正确答案)
-	resetMode: "auto", // auto(切页重渲染即重置) | manual(批改态保留直到按重置)
-	showReset: true, // 自动重置时批改后是否显示重置按钮(手动重置时恒显示)
-	verdictOk: "回答正确！", // 判对文案
-	verdictBad: "回答错误！正确答案：{ans}，你的选择：{pick}", // 判错文案({ans}/{pick} 占位)
+	resetMode: "manual", // user 偏好:跨容器保留批改态直到按重置
+	showReset: true, // 批改后显示重置按钮
+	verdictOk: "回答正确！正确答案：{ans}。", // 判对文案
+	verdictBad: "回答错误！正确答案：{ans}，你的选择：{pick}。", // 判错文案({ans}/{pick} 占位)
 	renumberExclude: "", // 重新编号屏蔽目录(每行一个路径)
-	btnSubmit: { mix: 30, hover: 0, fg: "auto", bold: true }, // 提交按钮外观(混色%/悬停±/字色/字重)
-	btnReset: { mix: 10, hover: 0, fg: "auto", bold: false }, // 重置按钮外观
-	favorites: [], // 已收藏的块 key 列表(前端先行,后续做收藏夹视图)
-	favBtn: { size: 24, editDX: 0, readDX: 0, readDY: 0 }, // 收藏按钮微调:尺寸px/编辑横向/阅读横向/阅读纵向
-	idMode: "manual", // manual | auto
-	idLength: 7, // 3..9
-	defaultBindStem: false, // bind 是否保留题干(默认不保留)
+	btnSubmit: { mix: 65, hover: 0.04, fg: "white", bold: false }, // 提交按钮外观(混色%/悬停±/字色/字重)
+	btnReset: { mix: 25, hover: -0.04, fg: "black", bold: false }, // 重置按钮外观
+	favorites: [], // 已收藏的题目 id 列表(按 id 登记:bind/copy 镜像与源题共享同一收藏;收藏夹视图读取)
+	favBtn: { size: 24, editDX: 0, readDX: -3, readDY: -9 }, // 收藏按钮微调:尺寸px/编辑横向/阅读横向/阅读纵向
+	idMode: "auto", // manual | auto(user 偏好自动分配)
+	idLength: 6, // 3..9(user 偏好 6 位)
+	defaultBindStem: true, // bind 是否保留题干(user 偏好保留)
 	debug: false, // 调试日志
 };
 

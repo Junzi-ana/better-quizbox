@@ -28,8 +28,10 @@ What is $\int_0^1 x \, dx$?
 - Questions, options, and explanations accept multi-line Markdown and LaTeX.
 - Automatic option shuffling, with a stable order shared between card faces.
 - Automatic stable block IDs, with `bind` / `copy` blocks that mirror a question elsewhere and follow its order.
+- Favorite button: a star on each quiz block to bookmark it. Favorites are registered by question id, so a question and all its `bind`/`copy` mirrors share one favorite. A favorites side panel (experimental) lists them grouped by file.
 - Answers never touch the note file — closing the file resets everything.
 - Works in reading view and flashcard review; in the editor it shows as a normal code block.
+- Ships with sensible factory presets (the author's daily configuration) — every setting has a ready-made default out of the box.
 
 ## Usage
 
@@ -55,15 +57,15 @@ Attributes are whole-line HTML comments, one per line, placed anywhere inside th
 
 | Attribute | Values | Default | Effect |
 |-----------|--------|---------|--------|
-| `mode` | `static` / `immediate` / `non-immediate` | `immediate` | Answering behavior |
+| `mode` | `static` / `immediate` / `non-immediate` | `non-immediate` | Answering behavior |
 | `shuffle` | `on` / `off` | `on` | Option shuffling (dynamic blocks only) |
-| `number` | `abc` / `123` / `none` | `none` | Display A/B/C or 1/2/3 labels |
+| `number` | `abc` / `123` / `none` | `abc` | Display A/B/C or 1/2/3 labels |
 | `id` | auto (counter) or any name | file hash + block number | Identifies a block; auto-assigned to blocks lacking one and never rewritten when the question changes |
-| `bind` | a block id | — | Renders a read-only copy of that question (stem hidden by default) |
+| `bind` | a block id | — | Renders a read-only copy of that question (stem kept by default) |
 | `copy` | a block id | — | Renders an editable copy of that question, keeping its mode |
-| `stem` | `on` / `off` | `off` for `bind`, `on` for `copy` | Keep the target's stem |
+| `stem` | `on` / `off` | `on` | Keep the target's stem (both `bind` and `copy` keep it by default) |
 | `submit` | `on` / `off` | `on` | Submit-and-grade button in `non-immediate` mode (off = pure selection, no grading) |
-| `reset` | `auto` / `manual` | `auto` | Auto: resetting happens on page switches; Manual: the graded state stays until you press Reset |
+| `reset` | `auto` / `manual` | `manual` | Auto: resetting happens on page switches; Manual (factory preset): the graded state stays until you press Reset |
 
 Several attributes can share one comment: `<!-- mode: static, number: abc -->`.
 
@@ -71,9 +73,9 @@ Duplicate options (same text, ignoring case and surrounding whitespace) are dedu
 
 ### Block IDs, bind and copy
 
-Every dynamic block can carry an `id`. In auto mode (default) a block that has no `id` gets a stable counter id = file-name hash prefix + block number (code length adjustable, default 7). An id, once assigned, is never rewritten: editing the stem or options doesn't change it, so `bind`/`copy` references never break. A "Renumber all block IDs" button in the settings renumbers every block per file from 0 and updates references to match.
+Every dynamic block can carry an `id`. In auto mode (factory preset) a block that has no `id` gets a stable counter id = file-name hash prefix + block number (code length adjustable, default 6). An id, once assigned, is never rewritten: editing the stem or options doesn't change it, so `bind`/`copy` references never break. A "Renumber all block IDs" button in the settings renumbers every block per file from 0 and updates references to match.
 
-A `bind` block renders the target question read-only (correct options highlighted); by default the stem is hidden — add `<!-- stem: on -->` to keep it. A `copy` block renders an editable copy that keeps the target's own mode, so you can answer it independently. Both follow the target's current shuffled option order. An id that can't be resolved simply renders the block as a normal question. `bind`/`copy` blocks themselves get no id.
+A `bind` block renders the target question read-only (correct options highlighted); by default the stem is kept — add `<!-- stem: off -->` to hide it. A `copy` block renders an editable copy that keeps the target's own mode, so you can answer it independently. Both follow the target's current shuffled option order. An id that can't be resolved simply renders the block as a normal question. `bind`/`copy` blocks themselves get no id.
 
 ### Modes
 
@@ -94,10 +96,12 @@ Settings → Better Quiz Box; explicit block attributes always win:
 - **Verdict text** — customizable templates for correct/wrong verdicts; `{ans}` inserts the correct-answer letters, `{pick}` your selection
 - **Button appearance (collapsible)** — per-button accent-blend ratio, hover brighten/darken slider, foreground color (auto / anti-auto / white / black), font weight, one-click swap
 - **Block id assignment** — manual / auto (auto assigns a stable counter id to each block lacking one; ids are never rewritten, so editing a question doesn't change its id)
-- **Id code length** — 3–9 characters (default 7); half is the file-name hash, the other half a zero-padded block number, odd lengths give the hash the extra digit
+- **Id code length** — 3–9 characters (default 6); half is the file-name hash, the other half a zero-padded block number, odd lengths give the hash the extra digit
 - **Renumber all block IDs** — renumber every block per file from 0 (references are updated to match; cross-file collisions are avoided automatically; idempotent — repeated clicks finish instantly)
 - **Renumber exclude list** — one path per line; excluded folders/files are skipped when renumbering
-- **Keep stem in bind blocks** — off by default
+- **Keep stem in bind blocks** — on by default (`<!-- stem: off -->` hides it for a single block)
+- **Favorite button** — size, and edit/reading-view offset nudges; button position adapts automatically in editing view
+- **Favorites panel** — open from the star icon in the left ribbon; lists favorite questions grouped by file with their id and stem preview, collapsible groups, per-group counts; clicking a row jumps to the source note
 
 Changes apply to newly rendered blocks; already-rendered ones stay as they are. A block can always override a default with its own attribute, e.g. `<!-- number: none -->` turns numbering off for that block even when a default is set.
 
@@ -154,8 +158,10 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - 题干、选项、解析均支持多行 Markdown 与 LaTeX。
 - 选项自动打乱，正反面共享同一顺序。
 - 自动稳定的块 id（计数器编号，永不改写）；`bind` / `copy` 块可在他处镜像某道题并跟随其顺序。
+- 收藏按钮：每道题右上角的星，收藏/取消收藏。收藏按题目 id 登记——源题与其所有 `bind`/`copy` 镜像共享同一个收藏。侧栏「收藏夹(测试)」面板按文件分组列出，带 id、题干缩略与折叠计数。
 - 作答不触碰笔记文件——关闭文件即自动复位。
 - 阅读视图与闪卡复习中可用；编辑器中显示为普通代码块。
+- 出厂即带作者日常配置预设，装好就有可用的默认设置。
 
 ### 用法
 
@@ -181,15 +187,15 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 | 属性 | 取值 | 缺省 | 作用 |
 |------|------|------|------|
-| `mode` | `static` / `immediate` / `non-immediate` | `immediate` | 作答行为 |
+| `mode` | `static` / `immediate` / `non-immediate` | `non-immediate` | 作答行为 |
 | `shuffle` | `on` / `off` | `on` | 打乱选项（仅动态块） |
-| `number` | `abc` / `123` / `none` | `none` | 显示 A/B/C 或 1/2/3 编号 |
+| `number` | `abc` / `123` / `none` | `abc` | 显示 A/B/C 或 1/2/3 编号 |
 | `id` | 自动（计数器编号）或任意名字 | 文件 hash + 块号 | 块的标识；自动分配给没有 id 的块，题面变化时永不改写 |
-| `bind` | 某个块的 id | — | 只读渲染该题（默认隐藏题干） |
+| `bind` | 某个块的 id | — | 只读渲染该题（默认保留题干） |
 | `copy` | 某个块的 id | — | 可作答渲染该题，保留其模式 |
-| `stem` | `on` / `off` | `bind` 为 `off`、`copy` 为 `on` | 是否保留目标题干 |
+| `stem` | `on` / `off` | `on` | 是否保留目标题干 |
 | `submit` | `on` / `off` | `on` | `non-immediate` 模式的提交按钮（关 = 纯作答不出答案） |
-| `reset` | `auto` / `manual` | `auto` | 自动：切页即重置；手动：批改结果保留到按重置键 |
+| `reset` | `auto` / `manual` | `manual` | 自动：切页即重置；手动（出厂预设）：批改结果保留到按重置键 |
 
 多条属性可以共用一行注释：`<!-- mode: static, number: abc -->`。
 
@@ -197,9 +203,9 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 ### 块 id、bind 与 copy
 
-每个动态块都可以带一个 `id`。自动模式（缺省）下，没有 id 的块会得到一个**稳定的计数器编号** = 文件名 hash 前缀 + 块号（码长可调，缺省 7）。id 一旦分配**永不改写**：改题干或选项都不会改变它，所以 `bind`/`copy` 引用永远不会失效。设置里的「全库重新编号」按钮会逐文件从 0 重编所有块，并同步更新引用。
+每个动态块都可以带一个 `id`。自动模式（出厂预设）下，没有 id 的块会得到一个**稳定的计数器编号** = 文件名 hash 前缀 + 块号（码长可调，缺省 6）。id 一旦分配**永不改写**：改题干或选项都不会改变它，所以 `bind`/`copy` 引用永远不会失效。设置里的「全库重新编号」按钮会逐文件从 0 重编所有块，并同步更新引用。
 
-`bind` 块只读渲染目标题（正确项高亮），默认隐藏题干，写 `<!-- stem: on -->` 可保留；`copy` 块渲染可作答的副本，保留目标自身的模式，可以独立作答。两者都跟随目标题当前的打乱顺序。id 无法解析时，该块按普通题渲染。`bind`/`copy` 块本身不分配 id。
+`bind` 块只读渲染目标题（正确项高亮），默认保留题干，写 `<!-- stem: off -->` 可隐藏；`copy` 块渲染可作答的副本，保留目标自身的模式，可以独立作答。两者都跟随目标题当前的打乱顺序。id 无法解析时，该块按普通题渲染。`bind`/`copy` 块本身不分配 id。
 
 ### 三种模式
 
@@ -220,10 +226,12 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - **批改文案**——判对/判错模板可自定义；`{ans}` = 正确答案字母、`{pick}` = 你的选择
 - **按钮外观（折叠）**——两按钮各自的强调色混合比例、悬停幅度（左右拖动）、字色（自动/反自动/白/黑）、字重，以及一键交换配置
 - **题目 id 分配**——手动 / 自动（自动给没有 id 的块分配稳定的计数器编号；id 永不改写，改题面不变）
-- **id 码长**——3–9 位（缺省 7）；一半文件名 hash、一半块号定长，奇数时多一位 hash
+- **id 码长**——3–9 位（缺省 6）；一半文件名 hash、一半块号定长，奇数时多一位 hash
 - **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开；幂等，重复点击瞬时完成）
 - **重新编号屏蔽目录**——每行一个路径，重新编号时跳过
-- **bind 块保留题干**——缺省关
+- **bind 块保留题干**——缺省开（单块写 `<!-- stem: off -->` 可关）
+- **收藏按钮**——尺寸、编辑/阅读视图偏移微调；编辑视图下按钮位置自动避开右上角其他图标
+- **收藏夹面板**——左侧栏星图标唤出；按文件分组列出收藏题，含 id 与题干缩略、分组折叠与计数；点击行跳转到源笔记
 
 改动只影响之后渲染的块，已在页面上的不变。块内可以用自己的属性覆盖缺省，例如设了默认编号后，单个块写 `<!-- number: none -->` 即可关掉编号。
 
