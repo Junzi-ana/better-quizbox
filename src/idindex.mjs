@@ -81,8 +81,9 @@ function scanSources(text) {
   return out;
 }
 
-// 选项集签名(文本+正确态,忽略顺序):判断"选项是否真的变了"
-function optSig(options) {
+// 选项集签名(文本+正确态,忽略顺序):判断"选项是否真的变了"。
+// 全库唯一实现:索引置换守卫与渲染层卡片瞬态守卫(runRender/复习页)共用这一份公式。
+export function optSigOf(options) {
   return options
     .map((o) => o.state + "\u0001" + o.text.trim().toLowerCase().replace(/\s+/g, " "))
     .sort()
@@ -118,7 +119,7 @@ export function replaceFileEntries(filePath, text) {
       const prev = before.get(k) || null;
       if (!prev || prev.source !== source) changed.add(k);
       const keptOrder =
-        prev && optSig(prev.options) === optSig(data.options) ? prev.currentOrder || null : null;
+        prev && optSigOf(prev.options) === optSigOf(data.options) ? prev.currentOrder || null : null;
       idIndex.set(k, {
         file: filePath,
         source,

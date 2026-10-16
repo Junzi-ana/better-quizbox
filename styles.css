@@ -813,20 +813,33 @@
     gap: 10px;
 }
 
-.bqb-study-go {
-    flex: 1;
-    padding: 10px 0;
-    font-size: 1em;
+/* 面板主要按钮(入口/下一题):底色/文字/字重/圆角/悬停共用一套,尺寸各自给 */
+.bqb-study-go,
+.bqb-study-next {
     font-weight: 600;
     border-radius: 6px;
-    border: 1px solid var(--background-modifier-border);
     background-color: var(--interactive-accent);
     color: var(--text-on-accent);
     cursor: pointer;
 }
 
+.bqb-study-go {
+    flex: 1;
+    padding: 10px 0;
+    font-size: 1em;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.bqb-study-next {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px 0;
+}
+
 /* 悬停略微加深(不用 interactive-accent-hover,那个跳变太狠) */
-.bqb-study-go:hover {
+.bqb-study-go:hover,
+.bqb-study-next:hover {
     filter: brightness(0.93);
 }
 
@@ -865,23 +878,6 @@
     margin-top: 8px;
     font-size: 0.85em;
     color: var(--text-muted);
-}
-
-/* 下一题/完成按钮 */
-.bqb-study-next {
-    display: block;
-    width: 100%;
-    margin-top: 12px;
-    padding: 8px 0;
-    border-radius: 6px;
-    background-color: var(--interactive-accent);
-    color: var(--text-on-accent);
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.bqb-study-next:hover {
-    filter: brightness(0.93);
 }
 
 /* 完成页 */

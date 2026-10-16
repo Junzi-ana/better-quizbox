@@ -65,7 +65,8 @@ import {
   setLogHook,
   stats,
   usedBlockNums,
-  allIds
+  allIds,
+  optSigOf
 } from "./idindex.mjs";
 import { Plugin, Modal, MarkdownRenderer, debounce, Menu, Notice, TFile, setIcon } from "obsidian";
 
@@ -100,7 +101,7 @@ function toggleFav(key, plugin, btn) {
     if (!peers.size) favButtons.delete(key);
   }
   // 收藏夹视图开着时同步刷新列表(星按钮/列表行两处入口都从这里过)
-  refreshFavViews(plugin);
+  refreshFavViews();
   new Notice(wasOn ? "已取消收藏" : "已收藏");
 }
 
@@ -200,23 +201,39 @@ function setupFavoriteButton(block, plugin, key) {
   registerFavBtn(key, btn);
 }
 
-/* ------- 收藏夹视图(测试用:侧栏星图标唤出,列出全部收藏;仅测收藏逻辑,未来不一定保留) ------- */
+/* ------- 收藏夹 / 复习独立窗口 ------- */
 
 // 卡片 key 分隔符(与 state.mjs 约定一致:文件<0>id;无 id 块的内容串还含 <1>/<2> 分隔)。
 // 用 fromCharCode 而不写字面 \u 转义,避免源文件被塞进真实控制字符。
 const KEY_FILE_SEP = String.fromCharCode(0);
 const KEY_PART_SEP = String.fromCharCode(1);
 
-// 收藏夹开着时刷新列表(toggleFav 与侧栏唤出都会调)
-function refreshFavViews(plugin) {
+// 共享小工具:两位补零 / 星期名 / 日历 key("YYYY-MM-DD",activity 表与热力图同款)
+const pad2 = (n) => String(n).padStart(2, "0");
+const WEEKDAYS = "日一二三四五六";
+function dateKeyOf(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+// 判定文案模板(设置可调):{ans}=正确答案字母,{pick}=你的选择字母。
+// 笔记里的批改横幅与复习页判定共用这一份兜底。
+function verdictTexts(settings) {
+  return {
+    ok: settings.verdictOk || "回答正确！",
+    bad: settings.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}",
+  };
+}
+
+// 学习面板开着时刷新(toggleFav 与索引重建都会调)
+function refreshFavViews() {
   if (studyPanel) studyPanel.render();
 }
 
-// 时间戳显示:本地 YYYY-MM-DD HH:mm(收藏时间与将来的复习记录同款)
+// 时间戳显示:本地 YYYY-MM-DD HH:mm(收藏时间与复习记录同款)
 function fmtTs(ts) {
   const d = new Date(ts);
-  const p = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
 }
 
 /* ============ 复习进度(纯函数,可测) ============ */
@@ -299,12 +316,20 @@ class StudyPanel extends Modal {
   }
   go(page) { this.page = page; this.render(); }
 
+  // 返回主页按钮(复习页/题库页共用,同一套路):左箭头,回主页同时清复习会话
+  backBtn(parent) {
+    const back = parent.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": "返回主页" } });
+    setIcon(back, "left-arrow");
+    back.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
+    return back;
+  }
+
   /* ---------- 主页:问候语 + 统计 + 进度条 + 热力图 + 两个入口 ---------- */
   renderHome(root) {
     const d = new Date();
     const h = d.getHours();
     const greet = h < 6 ? "夜深了" : h < 9 ? "早上好" : h < 12 ? "上午好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
-    root.createDiv({ cls: "bqb-study-greet" }).setText(greet + " · " + (d.getMonth() + 1) + "月" + d.getDate() + "日 周" + "日一二三四五六"[d.getDay()]);
+    root.createDiv({ cls: "bqb-study-greet" }).setText(greet + " · " + (d.getMonth() + 1) + "月" + d.getDate() + "日 周" + WEEKDAYS[d.getDay()]);
     // 统计口径与题库列表一致:全库 ∪ 学习记录 ∪ 收藏
     const favs = this.plugin.settings.favorites || {};
     const study = this.plugin.settings.study || {};
@@ -338,13 +363,6 @@ class StudyPanel extends Modal {
     bank.addEventListener("click", () => this.go("bank"));
   }
 
-  /* 工具:把时间戳映射成当天日历 key(与 activity 键同款 "YYYY-MM-DD") */
-  dayKeyOf(ts) {
-    const d = new Date(ts);
-    const pad = (n) => String(n).padStart(2, "0");
-    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-  }
-
   // 某天的学习详情(供信息面板):每题第一条复习记录=学习新卡片,其后=复习旧卡片;
   // 当日发生的学习/复习次数与答对答错;无记录返回 null
   dayDetail(key) {
@@ -354,7 +372,7 @@ class StudyPanel extends Modal {
       const rs = rec?.reviews || [];
       for (let i = 0; i < rs.length; i++) {
         const r = rs[i];
-        if (r && typeof r.t === "number" && this.dayKeyOf(r.t) === key) {
+        if (r && typeof r.t === "number" && dateKeyOf(r.t) === key) {
           if (i === 0) learn++; else review++; // 首条=新卡,其后=复习
           if (r.ok) ok++; else bad++;
         }
@@ -369,17 +387,16 @@ class StudyPanel extends Modal {
   renderHeat(root) {
     root.createDiv({ cls: "bqb-study-sec" }).setText("学习记录");
     const act = this.plugin.settings.activity || {};
-    const padN = (n) => String(n).padStart(2, "0");
     const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayKey = dateKeyOf(Date.now()); // 今日格子描边/信息面板默认都用它
     const monday = new Date(today);
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // 对齐到本周一
     const wrap = root.createDiv({ cls: "bqb-study-heatwrap" });
     // 左列星期标签(只显示 一/三/五,同 GitHub)
     const days = wrap.createDiv({ cls: "bqb-study-heat-days" });
     days.createDiv({ cls: "bqb-study-heat-wlabel" }); // 顶部占位(与月份行同高)
-    const wdNames = ["日", "一", "二", "三", "四", "五", "六"];
     for (let i = 0; i < 7; i++) {
-      days.createDiv({ cls: "bqb-study-heat-wlabel", text: (i === 1 || i === 3 || i === 5) ? wdNames[i] : "" });
+      days.createDiv({ cls: "bqb-study-heat-wlabel", text: (i === 1 || i === 3 || i === 5) ? WEEKDAYS[i] : "" });
     }
     // 中间热力主体:月份行 + 格子行(同容器,同列宽)
     const main = wrap.createDiv({ cls: "bqb-study-heat-main" });
@@ -399,7 +416,7 @@ class StudyPanel extends Modal {
       const det = this.dayDetail(key);
       const d = new Date(key + "T00:00:00");
       info.createDiv({ cls: "bqb-study-hi-title" })
-        .setText((d.getMonth() + 1) + "月" + d.getDate() + "日 周" + "日一二三四五六"[d.getDay()]);
+        .setText((d.getMonth() + 1) + "月" + d.getDate() + "日 周" + WEEKDAYS[d.getDay()]);
       if (!det) {
         info.createDiv({ cls: "bqb-study-hi-line" }).setText("没有复习记录");
         return;
@@ -415,17 +432,17 @@ class StudyPanel extends Modal {
         const d = new Date(monday);
         d.setDate(monday.getDate() - w * 7 + i);
         if (d > today) { col.createDiv({ cls: "bqb-study-heat-cell bqb-heat-lv0" }); continue; } // 未来日与无记录同款淡色
-        const key = d.getFullYear() + "-" + padN(d.getMonth() + 1) + "-" + padN(d.getDate());
+        const key = dateKeyOf(d.getTime());
         const n = act[key] || 0;
         const cell = col.createDiv({ cls: "bqb-study-heat-cell" });
         cell.classList.add(n >= 8 ? "bqb-heat-lv4" : n >= 4 ? "bqb-heat-lv3" : n >= 2 ? "bqb-heat-lv2" : n >= 1 ? "bqb-heat-lv1" : "bqb-heat-lv0");
-        if (key === this.dayKeyOf(Date.now())) cell.addClass("bqb-heat-today");
+        if (key === todayKey) cell.addClass("bqb-heat-today");
         cell.setAttribute("aria-label", key + " · 复习 " + n + " 题");
         cell.addEventListener("mouseenter", () => renderInfo(key));
         cell.addEventListener("click", () => renderInfo(key)); // 触屏点按也能看
       }
     }
-    renderInfo(this.dayKeyOf(Date.now())); // 默认显示今天
+    renderInfo(todayKey); // 默认显示今天
   }
 
   /* ---------- 复习页:从全库抽 10 题逐题作答,判对错并写排期 ---------- */
@@ -448,10 +465,7 @@ class StudyPanel extends Modal {
     const cur = this.rQueue[this.rIdx];
     const ref = cur.ref;
     const head = root.createDiv({ cls: "bqb-study-rvhead" });
-    // 返回按钮:与题库页同款(左箭头,点回主页不保存现场——下次再开新一轮)
-    const back = head.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": "返回主页" } });
-    setIcon(back, "left-arrow");
-    back.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
+    this.backBtn(head);
     head.createSpan({ cls: "bqb-study-rvprog" }).setText("第 " + (this.rIdx + 1) + " / " + this.rQueue.length + " 题");
     // 新/旧徽标:有无复习记录一目了然(没学过的=新卡,有记录的=复习)
     const isNew = !(this.plugin.settings.study?.[cur.key]?.reviews || []).length;
@@ -477,14 +491,12 @@ class StudyPanel extends Modal {
     data.submit = data.attrs.submit !== false;
     data.reset = "auto";
     data.showReset = false; // 复习流程不显示"重置",作答锁在批改态
-    data.verdictOk = this.plugin.settings.verdictOk || "回答正确！";
-    data.verdictBad = this.plugin.settings.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}";
+    const vt = verdictTexts(this.plugin.settings);
+    data.verdictOk = vt.ok;
+    data.verdictBad = vt.bad;
     const isMulti = data.options.filter((o) => o.state === "c").length > 1;
     const container = root.createDiv({ cls: "bqb-study-card" });
-    const optSig = data.options
-      .map((o) => o.state + "\u0001" + o.text.trim().toLowerCase().replace(/\s+/g, " "))
-      .sort()
-      .join("\u0002");
+    const optSig = optSigOf(data.options);
     const order = ref.currentOrder && ref.currentOrder.length === data.options.length
       ? ref.currentOrder : sourceOrder(ref.options);
     const ctrl = { key: cur.key, container, order, optSig, rerender: () => this.render() };
@@ -544,10 +556,8 @@ class StudyPanel extends Modal {
     study[cur.key] = rec;
     this.plugin.settings.study = study;
     const act = this.plugin.settings.activity || {};
-    const d = new Date(now);
-    const pad = (n) => String(n).padStart(2, "0");
-    const key = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-    act[key] = (act[key] || 0) + 1;
+    const dk = dateKeyOf(now);
+    act[dk] = (act[dk] || 0) + 1;
     this.plugin.settings.activity = act;
     this.plugin.saveSettings();
     this.appendNext(root, cur);
@@ -563,11 +573,9 @@ class StudyPanel extends Modal {
   renderList(root) {
     const favs = this.plugin.settings.favorites || {};
     const favIds = Object.keys(favs);
-    // 返回主页 + 顶栏
+    // 返回主页 + 顶栏;返回钮两页共用 backBtn(回主页同时清复习会话,统一路由)
     const bar = root.createDiv({ cls: "bqb-favbar" });
-    const back = bar.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": "返回主页" } });
-    setIcon(back, "left-arrow");
-    back.addEventListener("click", () => this.go("home"));
+    this.backBtn(bar);
     const head = bar.createDiv({ cls: "bqb-favlist-head" });
     const showBtn = bar.createEl("button", { cls: "bqb-showfav" + (this.showFavs ? " bqb-showfav--on" : ""), text: "显示收藏" });
     showBtn.addEventListener("click", () => { this.showFavs = !this.showFavs; this.render(); });
@@ -863,10 +871,7 @@ function registerQuizProcessor(plugin) {
         display.options.map((o) => o.state + "\u0001" + o.text).join("\u0002") +
         (display.details !== undefined ? "\u0001" + display.details : "");
     // 选项集签名(忽略顺序):选项增删/改文本/改正确态 → 守卫判定为重开(重摇)
-    const optSig = display.options
-      .map((o) => o.state + "\u0001" + o.text.trim().toLowerCase().replace(/\s+/g, " "))
-      .sort()
-      .join("\u0002");
+    const optSig = optSigOf(display.options);
     const container = stableContainer(el);
     const isDynamic = display.attrs.mode !== "static";
     const isMulti =
@@ -881,8 +886,9 @@ function registerQuizProcessor(plugin) {
     display.reset = display.attrs.reset === "manual" ? "manual" : "auto";
     display.showReset = plugin.settings.showReset !== false;
     // 批改文案模板(设置可调):{ans}=正确答案字母 {pick}=你的选择字母
-    display.verdictOk = plugin.settings.verdictOk || "回答正确！";
-    display.verdictBad = plugin.settings.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}";
+const vt = verdictTexts(plugin.settings);
+    display.verdictOk = vt.ok;
+    display.verdictBad = vt.bad;
     // sticky = 手动重置模式:跨容器保留作答/批改态(切页回来停留在答案状态,直到按重置)
     const sticky = display.reset === "manual";
 
@@ -1131,7 +1137,7 @@ export default class QuizBlockPlugin extends Plugin {
     buildIndex(files, readFn);
     // 索引建完刷新已打开的收藏夹:收藏夹叶子可能在索引就绪前就被恢复渲染,
     // 当时不查询不到源题(启动竞态),这里补一拍让它显示出真实条目
-    refreshFavViews(this);
+    refreshFavViews();
   }
 
   /* —— 单文件变更管线 —— */
