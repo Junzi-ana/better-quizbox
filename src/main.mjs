@@ -47,7 +47,7 @@ import {
   stableContainer,
   resetTransientState
 } from "./state.mjs";
-import { buildBlock, applyVisuals, dynamicClick } from "./render.mjs";
+import { buildBlock, applyVisuals, dynamicClick, gradeSummary } from "./render.mjs";
 import { DEFAULT_SETTINGS, QuizBoxSettingTab } from "./settings.mjs";
 import { assignCounterIds, renumberFile, collectIdMap, rewriteRefsInText, fileIdOf, hashLenOf } from "./idassign.mjs";
 import {
@@ -67,7 +67,7 @@ import {
   usedBlockNums,
   allIds
 } from "./idindex.mjs";
-import { Plugin, ItemView, MarkdownRenderer, debounce, Notice, TFile, setIcon } from "obsidian";
+import { Plugin, Modal, MarkdownRenderer, debounce, Menu, Notice, TFile, setIcon } from "obsidian";
 
 /* -------------------------------- 处理器注册 -------------------------------- */
 
@@ -84,11 +84,11 @@ const BTN_KEYS = [".edit-block-button", ".callout-copy-button", ".equation-copy-
 const favButtons = new Map();
 
 function toggleFav(key, plugin, btn) {
-  const favs = new Set(plugin.settings.favorites || []);
-  const wasOn = favs.has(key);
-  if (wasOn) favs.delete(key);
-  else favs.add(key);
-  plugin.settings.favorites = [...favs];
+  const favs = plugin.settings.favorites || {};
+  const wasOn = favs[key] ? true : false;
+  if (wasOn) delete favs[key];
+  else favs[key] = { addedAt: Date.now(), reviews: [] }; // reviews: 复习时间槽位(接口预留)
+  plugin.settings.favorites = favs;
   plugin.saveSettings();
   // 同步刷新本库所有同 key 按钮的星态(编辑/阅读视图一起变,即时互通);顺带惰性清扫断连按钮
   const peers = favButtons.get(key);
@@ -102,6 +102,11 @@ function toggleFav(key, plugin, btn) {
   // 收藏夹视图开着时同步刷新列表(星按钮/列表行两处入口都从这里过)
   refreshFavViews(plugin);
   new Notice(wasOn ? "已取消收藏" : "已收藏");
+}
+
+// 判断某 key 是否已收藏(星态读取用)
+function isFaved(favorites, key) {
+  return favorites && typeof favorites[key] === "object";
 }
 
 function applyFavState(btn, on) {
@@ -173,7 +178,7 @@ function setupFavoriteButton(block, plugin, key) {
       embed.appendChild(btn);
     }
     embed.__bqbDX = plugin.settings.favBtn?.editDX || 0;
-    btn.toggleClass("bqb-fav-on", (plugin.settings.favorites || []).includes(key));
+    btn.toggleClass("bqb-fav-on", isFaved(plugin.settings.favorites, key));
     registerFavBtn(key, btn);
     placeFavoriteOnEmbed(embed, btn, embed.__bqbDX);
     ensureEmbedObserver(embed, btn);
@@ -191,7 +196,7 @@ function setupFavoriteButton(block, plugin, key) {
       toggleFav(key, plugin, btn);
     });
   }
-  btn.toggleClass("bqb-fav-on", (plugin.settings.favorites || []).includes(key));
+  btn.toggleClass("bqb-fav-on", isFaved(plugin.settings.favorites, key));
   registerFavBtn(key, btn);
 }
 
@@ -202,91 +207,608 @@ function setupFavoriteButton(block, plugin, key) {
 const KEY_FILE_SEP = String.fromCharCode(0);
 const KEY_PART_SEP = String.fromCharCode(1);
 
-const FAV_VIEW_TYPE = "bqb-favorites";
-
 // 收藏夹开着时刷新列表(toggleFav 与侧栏唤出都会调)
 function refreshFavViews(plugin) {
-  const ws = plugin?.app?.workspace;
-  if (!ws || typeof ws.getLeavesOfType !== "function") return; // 测试沙箱无 workspace
-  for (const leaf of ws.getLeavesOfType(FAV_VIEW_TYPE)) {
-    if (leaf.view instanceof FavoritesView) leaf.view.renderList();
-  }
+  if (studyPanel) studyPanel.render();
 }
 
-class FavoritesView extends ItemView {
-  constructor(leaf, plugin) {
-    super(leaf);
-    this.plugin = plugin;
+// 时间戳显示:本地 YYYY-MM-DD HH:mm(收藏时间与将来的复习记录同款)
+function fmtTs(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+/* ============ 复习进度(纯函数,可测) ============ */
+// 复习记录 reviews[i] = { t 复习时间戳, ok 这对错 }
+// 复习排期按"最后一次复习时间"推导(不申请新字段,接口就是 reviews):
+//   - 从未复习 → null(待学习)
+//   - 最后一次答对 → 排期 = t + 7 天;答错 → t + 2 天(象征值,便于测试)
+// 约定:每过一天取一次复习记录,多答只记最终对错(连续点击不叠加次数)。
+const REVIEW_OK_DAYS = 7; // 答对 → 7 天后再见(测试值)
+const REVIEW_BAD_DAYS = 2; // 答错 → 2 天后(测试值)
+const MK_DAY = 24 * 3600 * 1000;
+
+// 状态:new(待学习) / learn(已学习未到期) / due(待复习)
+export function reviewState(recs, now) {
+  if (!Array.isArray(recs) || !recs.length) return "new";
+  const last = recs[recs.length - 1];
+  const ok = !!last.ok;
+  const due = last.t + (ok ? REVIEW_OK_DAYS : REVIEW_BAD_DAYS) * MK_DAY;
+  return now >= due ? "due" : "learn";
+}
+
+// 该题排期到的时刻(未复习返回 null)
+export function reviewDue(recs) {
+  if (!Array.isArray(recs) || !recs.length) return null;
+  const last = recs[recs.length - 1];
+  return last.t + (last.ok ? REVIEW_OK_DAYS : REVIEW_BAD_DAYS) * MK_DAY;
+}
+
+/* ============ 收藏夹 / 复习专用独立窗口 ============ */
+// 像 Spaced Repetition 的闪卡复习窗口:一个 modal 弹窗(非侧栏、非标签页),内置
+// 主页(home)/题库(bank)/复习(review)三个视图。单例体质:开着一个再点星图标=聚焦它。
+let studyPanel = null;
+function openPanel(plugin) {
+  if (studyPanel) {
+    try { studyPanel.open(); } catch (e) {}
+    return studyPanel;
   }
-  getViewType() { return FAV_VIEW_TYPE; }
-  getDisplayText() { return "收藏夹(测试)"; }
-  getIcon() { return "star"; }
-  async onOpen() { this.renderList(); }
-  async onClose() {}
-  renderList() {
+  studyPanel = new StudyPanel(plugin.app, plugin);
+  studyPanel.open();
+  return studyPanel;
+}
+
+class StudyPanel extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.page = "home"; // home=主页 / bank=题库(原收藏夹列表) / review=复习
+    this.tab = "folder"; // 题库页内标签(folder=按目录 cats=分类)
+    this.showFavs = false; // 题库页「显示收藏」开关:关=全库题目,开=只列已收藏
+    // 复习会话(临时状态,不落盘):本轮队列/游标/对错计数/rCommitted=已提交记账的题key(防重)
+    this.rQueue = [];
+    this.rIdx = 0;
+    this.rOk = 0;
+    this.rBad = 0;
+    this.rCommitted = null;
+  }
+  // 视图注册表:未来加其它视图(搜索/统计页等)只需在这里追加一项 + 一个渲染分支,接口在此
+  static TABS = [
+    { id: "folder", name: "按目录" },
+    { id: "cats", name: "分类" },
+  ];
+  async onOpen() {
+    if (this.modalEl) this.modalEl.addClass("bqb-study-modal");
+    this.setTitle("Better Quiz Box");
+    this.render();
+    // 不聚焦:Obsidian 打开弹窗会自动聚焦首个可聚焦元素,主题给焦点态换边框观感,
+    // 导致"开始复习"和"题库"看起来不一致。本面板纯点击操作不需要焦点,打开后归还。
+    requestAnimationFrame(() => {
+      try { document.activeElement?.blur?.(); } catch (e) {}
+    });
+  }
+  async onClose() { if (studyPanel === this) studyPanel = null; }
+
+  render() {
     const root = this.contentEl;
     root.empty();
-    const favs = [...new Set(this.plugin.settings.favorites || [])];
-    const head = root.createDiv({ cls: "bqb-favlist-head" });
-    if (!favs.length) {
-      head.setText("还没有收藏。点题目右上角的星收藏。");
-      return;
+    if (this.page === "home") this.renderHome(root);
+    else if (this.page === "review") this.renderReview(root);
+    else this.renderList(root);
+  }
+  go(page) { this.page = page; this.render(); }
+
+  /* ---------- 主页:问候语 + 统计 + 进度条 + 热力图 + 两个入口 ---------- */
+  renderHome(root) {
+    const d = new Date();
+    const h = d.getHours();
+    const greet = h < 6 ? "夜深了" : h < 9 ? "早上好" : h < 12 ? "上午好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
+    root.createDiv({ cls: "bqb-study-greet" }).setText(greet + " · " + (d.getMonth() + 1) + "月" + d.getDate() + "日 周" + "日一二三四五六"[d.getDay()]);
+    // 统计口径与题库列表一致:全库 ∪ 学习记录 ∪ 收藏
+    const favs = this.plugin.settings.favorites || {};
+    const study = this.plugin.settings.study || {};
+    const keys = new Set([...allIds(), ...Object.keys(study), ...Object.keys(favs)]);
+    const now = Date.now();
+    let learned = 0, due = 0;
+    for (const k of keys) {
+      const s = reviewState(study[k] && study[k].reviews, now);
+      if (s !== "new") learned++;
+      if (s === "due") due++;
     }
-    // 索引还没建好(layout-ready 前)会让全部收藏误判失效,提前说明而不是显示假"已失效"
-    head.setText(
-      (allIds().size === 0 ? "id 索引尚未就绪,稍后重开此面板。" : "已收藏 ") + favs.length + " 题"
-    );
-    // 分组:按源题所在文件折叠(查 id 索引);查不到的(已删除/无 id 匿名块)归入失效组垫底
-    const groups = new Map();
-    for (const key of favs) {
-      const entry = lookupId(key);
-      const g = entry ? entry.file : null;
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push({ key, entry });
-    }
-    const sorted = [...groups.entries()].sort((a, b) => {
-      if (a[0] === null) return 1;
-      if (b[0] === null) return -1;
-      return a[0].localeCompare(b[0]);
-    });
-    for (const [file, rows] of sorted) {
-      const grp = root.createDiv({ cls: "bqb-favgrp" });
-      const grpHead = grp.createDiv({ cls: "bqb-favgrp-head" });
-      grpHead.setText((file === null ? "已失效/无 id" : file) + " · " + rows.length);
-      const body = grp.createDiv({ cls: "bqb-favgrp-body" });
-      grpHead.addEventListener("click", () => {
-        const hide = body.style.display !== "none";
-        body.style.display = hide ? "none" : "";
-        grp.toggleClass("bqb-favgrp-closed", hide); // 箭头旋转
-      });
-      for (const { key, entry } of rows) {
-        const row = body.createDiv({ cls: "bqb-favlist-row" });
-        const star = row.createEl("a", { cls: "bqb-favlist-star clickable-icon", attr: { "aria-label": "取消收藏" } });
-        setIcon(star, "star");
-        star.addClass("bqb-fav-on");
-        star.addEventListener("click", () => {
-          toggleFav(key, this.plugin);
-          this.renderList();
-        });
-        const info = row.createDiv({ cls: "bqb-favlist-info" });
-        // 缩略:题干单行截断
-        const stem = info.createDiv({ cls: "bqb-favlist-stem" });
-        stem.setText(entry ? (entry.question || "(无题干)") : "找不到源题(可能已删除)");
-        // 元信息行:id 等宽芯片;存活收藏整行可点跳转源文件(悬停 title 显完整路径)
-        const meta = info.createDiv({ cls: "bqb-favlist-meta" });
-        const idChip = meta.createSpan({ cls: "bqb-favlist-id" });
-        idChip.setText(key);
-        if (entry) {
-          info.title = entry.file;
-          info.addEventListener("click", () => {
-            const f = this.plugin.app.vault.getAbstractFileByPath(entry.file);
-            if (f) this.plugin.app.workspace.getLeaf(false).openFile(f);
-          });
-        } else {
-          info.addClass("bqb-favlist-dead");
+    const row = root.createDiv({ cls: "bqb-study-stats" });
+    const stat = (n, label) => {
+      const c = row.createDiv({ cls: "bqb-study-stat" });
+      c.createDiv({ cls: "bqb-study-stat-num" }).setText(String(n));
+      c.createDiv({ cls: "bqb-study-stat-label" }).setText(label);
+    };
+    stat(keys.size, "总题数");
+    stat(learned, "已学习");
+    stat(due, "待复习");
+    stat(keys.size - learned, "待学习");
+    // 进度条:已学习 / 总数
+    const bar = root.createDiv({ cls: "bqb-study-bar" });
+    bar.createDiv({ cls: "bqb-study-bar-fill" }).style.width = Math.round((learned / (keys.size || 1)) * 100) + "%";
+    // 热力图先渲染,入口按钮放它下面
+    this.renderHeat(root);
+    const ent = root.createDiv({ cls: "bqb-study-entries" });
+    const rev = ent.createEl("button", { cls: "bqb-study-go", text: "开始复习" });
+    rev.addEventListener("click", () => this.go("review"));
+    const bank = ent.createEl("button", { cls: "bqb-study-go", text: "题库" });
+    bank.addEventListener("click", () => this.go("bank"));
+  }
+
+  /* 工具:把时间戳映射成当天日历 key(与 activity 键同款 "YYYY-MM-DD") */
+  dayKeyOf(ts) {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  // 某天的学习详情(供信息面板):每题第一条复习记录=学习新卡片,其后=复习旧卡片;
+  // 当日发生的学习/复习次数与答对答错;无记录返回 null
+  dayDetail(key) {
+    const study = this.plugin.settings.study || {};
+    let learn = 0, review = 0, ok = 0, bad = 0;
+    for (const rec of Object.values(study)) {
+      const rs = rec?.reviews || [];
+      for (let i = 0; i < rs.length; i++) {
+        const r = rs[i];
+        if (r && typeof r.t === "number" && this.dayKeyOf(r.t) === key) {
+          if (i === 0) learn++; else review++; // 首条=新卡,其后=复习
+          if (r.ok) ok++; else bad++;
         }
       }
     }
+    const n = learn + review;
+    return n ? { n, learn, review, ok, bad, rate: ok / n } : null;
+  }
+
+  // 热力图:近 15 周每日学习/复习记录,仿 GitHub 贡献图(月份/星期标签 + 格子 + 右侧信息面板)
+  // 结构:星期列 | 热力主体(月份行 + 格子行,两者同列宽同 gap 天然对齐) | 信息面板
+  renderHeat(root) {
+    root.createDiv({ cls: "bqb-study-sec" }).setText("学习记录");
+    const act = this.plugin.settings.activity || {};
+    const padN = (n) => String(n).padStart(2, "0");
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // 对齐到本周一
+    const wrap = root.createDiv({ cls: "bqb-study-heatwrap" });
+    // 左列星期标签(只显示 一/三/五,同 GitHub)
+    const days = wrap.createDiv({ cls: "bqb-study-heat-days" });
+    days.createDiv({ cls: "bqb-study-heat-wlabel" }); // 顶部占位(与月份行同高)
+    const wdNames = ["日", "一", "二", "三", "四", "五", "六"];
+    for (let i = 0; i < 7; i++) {
+      days.createDiv({ cls: "bqb-study-heat-wlabel", text: (i === 1 || i === 3 || i === 5) ? wdNames[i] : "" });
+    }
+    // 中间热力主体:月份行 + 格子行(同容器,同列宽)
+    const main = wrap.createDiv({ cls: "bqb-study-heat-main" });
+    const months = main.createDiv({ cls: "bqb-study-heat-months" });
+    let lastMonth = null;
+    for (let w = 14; w >= 0; w--) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() - w * 7);
+      const m = d.getFullYear() * 12 + d.getMonth(); // 连续月份值,可比较
+      months.createDiv({ cls: "bqb-study-heat-mlabel", text: m !== lastMonth ? (d.getMonth() + 1) + "月" : "" });
+      lastMonth = m;
+    }
+    // 右侧详情面板:默认显示今天,悬停某格切换成那一天(先建函数供格子 hover 用)
+    const info = wrap.createDiv({ cls: "bqb-study-heat-info" });
+    const renderInfo = (key) => {
+      info.empty();
+      const det = this.dayDetail(key);
+      const d = new Date(key + "T00:00:00");
+      info.createDiv({ cls: "bqb-study-hi-title" })
+        .setText((d.getMonth() + 1) + "月" + d.getDate() + "日 周" + "日一二三四五六"[d.getDay()]);
+      if (!det) {
+        info.createDiv({ cls: "bqb-study-hi-line" }).setText("没有复习记录");
+        return;
+      }
+      info.createDiv({ cls: "bqb-study-hi-line" }).setText("学习新卡片 " + det.learn + " 张 · 复习旧卡片 " + det.review + " 张");
+      info.createDiv({ cls: "bqb-study-hi-line bqb-study-hi-line--ok" }).setText("答对 " + det.ok + " · 答错 " + det.bad);
+      info.createDiv({ cls: "bqb-study-hi-line" }).setText("正确率 " + Math.round(det.rate * 100) + "%");
+    };
+    const grid = main.createDiv({ cls: "bqb-study-heat-grid" });
+    for (let w = 14; w >= 0; w--) {
+      const col = grid.createDiv({ cls: "bqb-study-heat-col" });
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() - w * 7 + i);
+        if (d > today) { col.createDiv({ cls: "bqb-study-heat-cell bqb-heat-lv0" }); continue; } // 未来日与无记录同款淡色
+        const key = d.getFullYear() + "-" + padN(d.getMonth() + 1) + "-" + padN(d.getDate());
+        const n = act[key] || 0;
+        const cell = col.createDiv({ cls: "bqb-study-heat-cell" });
+        cell.classList.add(n >= 8 ? "bqb-heat-lv4" : n >= 4 ? "bqb-heat-lv3" : n >= 2 ? "bqb-heat-lv2" : n >= 1 ? "bqb-heat-lv1" : "bqb-heat-lv0");
+        if (key === this.dayKeyOf(Date.now())) cell.addClass("bqb-heat-today");
+        cell.setAttribute("aria-label", key + " · 复习 " + n + " 题");
+        cell.addEventListener("mouseenter", () => renderInfo(key));
+        cell.addEventListener("click", () => renderInfo(key)); // 触屏点按也能看
+      }
+    }
+    renderInfo(this.dayKeyOf(Date.now())); // 默认显示今天
+  }
+
+  /* ---------- 复习页:从全库抽 10 题逐题作答,判对错并写排期 ---------- */
+  startReview() {
+    const ids = [...allIds()];
+    for (let i = ids.length - 1; i > 0; i--) { // Fisher-Yates 洗牌
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    this.rQueue = ids.map((k) => ({ key: k, ref: lookupId(k) })).filter((x) => x.ref).slice(0, 10);
+    this.rIdx = 0; this.rOk = 0; this.rBad = 0; this.rCommitted = null;
+  }
+  renderReview(root) {
+    if (!this.rQueue.length) this.startReview();
+    if (!this.rQueue.length) { // 全库没有可复习的题
+      root.createDiv({ cls: "bqb-study-empty" }).setText("全库还没有可复习的 quiz(id 索引为空)。");
+      return;
+    }
+    if (this.rIdx >= this.rQueue.length) { this.renderReviewDone(root); return; }
+    const cur = this.rQueue[this.rIdx];
+    const ref = cur.ref;
+    const head = root.createDiv({ cls: "bqb-study-rvhead" });
+    // 返回按钮:与题库页同款(左箭头,点回主页不保存现场——下次再开新一轮)
+    const back = head.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": "返回主页" } });
+    setIcon(back, "left-arrow");
+    back.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
+    head.createSpan({ cls: "bqb-study-rvprog" }).setText("第 " + (this.rIdx + 1) + " / " + this.rQueue.length + " 题");
+    // 新/旧徽标:有无复习记录一目了然(没学过的=新卡,有记录的=复习)
+    const isNew = !(this.plugin.settings.study?.[cur.key]?.reviews || []).length;
+    head.createSpan({ cls: "bqb-study-rvbadge " + (isNew ? "bqb-rvbadge-new" : "bqb-rvbadge-old") })
+      .setText(isNew ? "新卡" : "复习");
+
+    // —— 复用正牌 quiz 渲染/交互(non-immediate + 提交判分),与笔记里完全一致 ——
+    // display 与 runRender 同等形态;选项深拷贝,state 保留正确标记("c"=正确项),
+    // dynamicClick 在此基础上切换选态("c"→"r" 对选 / " "→"w" 错选),判分靠它。
+    const data = {
+      attrs: {
+        mode: "non-immediate",
+        shuffle: true,
+        number: this.plugin.settings.defaultNumbering || "none",
+        submit: true,
+        reset: "auto", // 非 manual → 提交后不显示重置按钮(复习作答锁在批改态)
+      },
+      question: ref.question || "(无题干)",
+      options: ref.options.map((o) => ({ optIdx: o.optIdx, state: o.state, text: o.text })),
+      details: ref.details,
+      submitted: false,
+    };
+    data.submit = data.attrs.submit !== false;
+    data.reset = "auto";
+    data.showReset = false; // 复习流程不显示"重置",作答锁在批改态
+    data.verdictOk = this.plugin.settings.verdictOk || "回答正确！";
+    data.verdictBad = this.plugin.settings.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}";
+    const isMulti = data.options.filter((o) => o.state === "c").length > 1;
+    const container = root.createDiv({ cls: "bqb-study-card" });
+    const optSig = data.options
+      .map((o) => o.state + "\u0001" + o.text.trim().toLowerCase().replace(/\s+/g, " "))
+      .sort()
+      .join("\u0002");
+    const order = ref.currentOrder && ref.currentOrder.length === data.options.length
+      ? ref.currentOrder : sourceOrder(ref.options);
+    const ctrl = { key: cur.key, container, order, optSig, rerender: () => this.render() };
+    const block = buildBlock(container, data);
+    // 渲染题干/选项/解析(Markdown / LaTeX,异步填字不阻塞交互挂接)
+    const qEl = block.querySelector(".quiz-question");
+    if (qEl) MarkdownRenderer.render(this.app, ref.question || "(无题干)", qEl, "", this.plugin).catch(() => {});
+    block.querySelectorAll(".quiz-option__body").forEach((bodyEl) => {
+      const oi = parseInt(bodyEl.parentElement.dataset.optIdx, 10);
+      const o = data.options.find((x) => x.optIdx === oi);
+      if (o) MarkdownRenderer.render(this.app, o.text, bodyEl, "", this.plugin).catch(() => {});
+    });
+    if (ref.details !== undefined) {
+      const dEl = block.querySelector(".quiz-details");
+      if (dEl) MarkdownRenderer.render(this.app, ref.details, dEl, "", this.plugin).catch(() => {});
+    }
+    reorderRowsTo(block, order);
+    applyVisuals(block, data, data.attrs.number, ctrl); // 建提交按钮+判定横幅,应用选态着色
+    // 点击选项:正牌 state 机(单选互斥/多选各自 toggle)
+    block.querySelectorAll(".quiz-option").forEach((optEl) => {
+      optEl.addEventListener("click", () => {
+        const oi = parseInt(optEl.dataset.optIdx, 10);
+        const opt = data.options.find((x) => x.optIdx === oi);
+        if (!opt) return;
+        dynamicClick(block, data, opt, ctrl, isMulti);
+      });
+    });
+    // 提交判分:提交按钮自带的 submitQuiz 先跑(置 submitted+批改视觉),这里追加一次记账
+    const subBtn = block.querySelector(".quiz-action-btn--submit");
+    if (subBtn) {
+      subBtn.addEventListener("click", () => {
+        if (this.rCommitted === cur.key) return; // 防重复记账
+        this.rCommitted = cur.key;
+        this.record(cur, data, root);
+      });
+    }
+    // 已提交过本题(切回/外部刷新重渲时):补上"下次复习"+下一题
+    if (this.rCommitted === cur.key) {
+      this.appendNext(root, cur);
+    }
+  }
+  // 追加判定后的"下次复习时刻 + 下一题/完成"(原地插入,不重渲)
+  appendNext(root, cur) {
+    const span = root.createDiv({ cls: "bqb-study-rvnext" });
+    span.setText("下次复习:" + fmtTs(reviewDue(this.plugin.settings.study?.[cur.key]?.reviews)));
+    const next = root.createEl("button", { cls: "bqb-study-next", text: this.rIdx + 1 >= this.rQueue.length ? "完成" : "下一题" });
+    next.addEventListener("click", () => { this.rIdx++; this.rCommitted = null; this.render(); });
+  }
+  // 提交后判分落账:gradeSummary 计算对错 → 写复习记录(study 表)+ 当日热力 +1
+  record(cur, data, root) {
+    const ok = gradeSummary(data).ok;
+    if (ok) this.rOk++; else this.rBad++;
+    const study = this.plugin.settings.study || {};
+    const now = Date.now();
+    const rec = study[cur.key] || { reviews: [] };
+    rec.reviews = [...(rec.reviews || []), { t: now, ok }];
+    study[cur.key] = rec;
+    this.plugin.settings.study = study;
+    const act = this.plugin.settings.activity || {};
+    const d = new Date(now);
+    const pad = (n) => String(n).padStart(2, "0");
+    const key = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    act[key] = (act[key] || 0) + 1;
+    this.plugin.settings.activity = act;
+    this.plugin.saveSettings();
+    this.appendNext(root, cur);
+  }
+  renderReviewDone(root) {
+    root.createDiv({ cls: "bqb-study-greet" }).setText("本轮复习完成");
+    root.createDiv({ cls: "bqb-study-done" }).setText("共 " + this.rQueue.length + " 题 · 答对 " + this.rOk + " · 答错 " + this.rBad);
+    const btn = root.createEl("button", { cls: "bqb-study-next", text: "返回主页" });
+    btn.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
+  }
+
+  /* ---------- 题库页(原收藏夹):全库浏览 + 显示收藏 ---------- */
+  renderList(root) {
+    const favs = this.plugin.settings.favorites || {};
+    const favIds = Object.keys(favs);
+    // 返回主页 + 顶栏
+    const bar = root.createDiv({ cls: "bqb-favbar" });
+    const back = bar.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": "返回主页" } });
+    setIcon(back, "left-arrow");
+    back.addEventListener("click", () => this.go("home"));
+    const head = bar.createDiv({ cls: "bqb-favlist-head" });
+    const showBtn = bar.createEl("button", { cls: "bqb-showfav" + (this.showFavs ? " bqb-showfav--on" : ""), text: "显示收藏" });
+    showBtn.addEventListener("click", () => { this.showFavs = !this.showFavs; this.render(); });
+    // 数据源:全库所有 quiz id(id 索引);"显示收藏"开着时只列已收藏
+    let keys;
+    if (this.showFavs) {
+      keys = favIds;
+    } else {
+      keys = [...allIds()];
+      for (const k of favIds) if (!keys.includes(k)) keys.push(k); // 收藏但索引查不到的(已失效)也列
+    }
+    if (!keys.length) {
+      head.setText(this.showFavs ? "还没有收藏。点题目右上角的星收藏。" : "全库还没有 quiz 块。");
+      return;
+    }
+    head.setText(allIds().size === 0
+      ? "id 索引尚未就绪,列表可能不全;"
+      : "共 " + keys.length + " 题,已收藏 " + favIds.length + " 题");
+    const tabs = root.createDiv({ cls: "bqb-tabs" });
+    for (const t of StudyPanel.TABS) {
+      const el = tabs.createDiv({ cls: "bqb-tab" + (this.tab === t.id ? " bqb-tab--on" : "") });
+      el.setText(t.name);
+      el.addEventListener("click", () => { this.tab = t.id; this.render(); });
+    }
+    if (this.tab === "folder") this.renderFolder(root, keys);
+    else if (this.tab === "cats") this.renderCats(root, keys);
+  }
+
+  // 共享条目行:星(点亮=已收藏,灰=未收藏,点击切换) + 题干缩略 + id/状态/时间/分类芯片 + 标签钮 + 点行跳转
+  favRow(parent, key, ref) {
+    const favs = this.plugin.settings.favorites || {};
+    const assign = this.plugin.settings.catAssign || {};
+    const study = this.plugin.settings.study || {};
+    const faved = !!favs[key];
+    const row = parent.createDiv({ cls: "bqb-favlist-row" });
+    const star = row.createEl("a", { cls: "bqb-favlist-star clickable-icon", attr: { "aria-label": faved ? "取消收藏" : "收藏本题" } });
+    setIcon(star, "star");
+    if (faved) star.addClass("bqb-fav-on");
+    else star.addClass("bqb-fav-off");
+    star.addEventListener("click", () => {
+      toggleFav(key, this.plugin);
+      this.render();
+    });
+    const info = row.createDiv({ cls: "bqb-favlist-info" });
+    const stem = info.createDiv({ cls: "bqb-favlist-stem" });
+    stem.setText(ref ? (ref.question || "(无题干)") : "找不到源题(可能已删除)");
+    const meta = info.createDiv({ cls: "bqb-favlist-meta" });
+    meta.createSpan({ cls: "bqb-favlist-id" }).setText(key);
+    // 学习状态芯片:待学习(无复习记录)/待复习(已到期)/下次 复习时刻(未到期);复习记录存 study 表
+    const st = reviewState(study[key] && study[key].reviews, Date.now());
+    if (st === "due") meta.createSpan({ cls: "bqb-favlist-state bqb-state-due" }).setText("待复习");
+    else if (st === "learn") meta.createSpan({ cls: "bqb-favlist-state bqb-state-learn" }).setText("下次 " + fmtTs(reviewDue(study[key].reviews)));
+    else meta.createSpan({ cls: "bqb-favlist-state bqb-state-new" }).setText("待学习");
+    if (faved) meta.createSpan({ cls: "bqb-favlist-time" }).setText(fmtTs(favs[key].addedAt || Date.now()));
+    for (const c of assign[key] || []) meta.createSpan({ cls: "bqb-favlist-cat" }).setText(c);
+    const catBtn = row.createEl("a", { cls: "bqb-favlist-catbtn clickable-icon", attr: { "aria-label": "归类到…" } });
+    setIcon(catBtn, "tags");
+    catBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.catMenu(key, ev);
+    });
+    // 整行可点跳转源文件(星/标签钮已 stopPropagation,不会误触);弹窗先关,主区切文件
+    if (ref) {
+      row.addEventListener("click", () => this.jump(ref.file));
+      info.title = ref.file;
+    } else {
+      info.addClass("bqb-favlist-dead");
+    }
+  }
+
+  // 归类菜单:原生 Menu 多选勾;分类独立于收藏——未收藏的题也能归类(存 catAssign)。「未分类」恒在底部
+  catMenu(key, ev) {
+    const cats = this.plugin.settings.favCats || [];
+    const cur = this.plugin.settings.catAssign || {};
+    const mine = cur[key] || [];
+    const menu = new Menu();
+    for (const c of cats) {
+      menu.addItem((item) =>
+        item
+          .setTitle(c)
+          .setChecked(mine.includes(c))
+          .onClick(() => {
+            const assign = this.plugin.settings.catAssign || {};
+            const has = (assign[key] || []).includes(c);
+            assign[key] = has ? assign[key].filter((x) => x !== c) : [...(assign[key] || []), c];
+            this.plugin.settings.catAssign = assign;
+            this.plugin.saveSettings();
+            this.render();
+          })
+      );
+    }
+    if (cats.length) menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("未分类")
+        .setChecked(!mine.length)
+        .onClick(() => {
+          const assign = this.plugin.settings.catAssign || {};
+          delete assign[key];
+          this.plugin.settings.catAssign = assign;
+          this.plugin.saveSettings();
+          this.render();
+        })
+    );
+    menu.showAtMouseEvent(ev);
+  }
+
+  renderFolder(root, keys) {
+    // 目录树:按源文件路径的目录层级折叠,文件为叶节点(其下列题目行);查不到的垫底
+    const dead = [];
+    const treeRoot = { dirs: new Map(), files: [] };
+    for (const key of keys) {
+      const ref = lookupId(key);
+      if (!ref) { dead.push(key); continue; }
+      const parts = ref.file.split("/");
+      const name = parts.pop();
+      let node = treeRoot;
+      for (const d of parts) {
+        if (!node.dirs.has(d)) node.dirs.set(d, { dirs: new Map(), files: [] });
+        node = node.dirs.get(d);
+      }
+      // 同一文件的多题合并进同一文件节点(否则每题各开一棵折叠栏)
+      let fe = node.files.find((x) => x.name === name);
+      if (!fe) { fe = { name, rows: [] }; node.files.push(fe); }
+      fe.rows.push(key);
+    }
+    const cnt = (n) => n.files.reduce((s, f) => s + f.rows.length, 0)
+      + [...n.dirs.values()].reduce((s, d) => s + cnt(d), 0);
+    this.treeNode(root, treeRoot, cnt);
+    if (dead.length) this.grpBox(root, "已失效", dead, null);
+  }
+
+  // 递归渲染目录树:目录/文件都是可折叠框(border-left 逐层缩进即成树);同级按名字排序稳定显示
+  treeNode(parent, node, cnt) {
+    for (const [d, sub] of [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const grp = parent.createDiv({ cls: "bqb-favgrp" });
+      const head = grp.createDiv({ cls: "bqb-favgrp-head" });
+      head.setText(d + " · " + cnt(sub));
+      const body = grp.createDiv({ cls: "bqb-favgrp-body" });
+      head.addEventListener("click", () => this.foldGrp(grp, body));
+      this.treeNode(body, sub, cnt);
+    }
+    for (const f of [...node.files].sort((a, b) => a.name.localeCompare(b.name))) {
+      const grp = parent.createDiv({ cls: "bqb-favgrp" });
+      const head = grp.createDiv({ cls: "bqb-favgrp-head" });
+      head.setText(f.name + " · " + f.rows.length);
+      const body = grp.createDiv({ cls: "bqb-favgrp-body" });
+      head.addEventListener("click", () => this.foldGrp(grp, body));
+      for (const r of f.rows) this.favRow(body, r, lookupId(r));
+    }
+  }
+
+  foldGrp(grp, body) {
+    const foldUp = body.style.display !== "none";
+    body.style.display = foldUp ? "none" : "";
+    grp.toggleClass("bqb-favgrp-closed", foldUp);
+  }
+
+  renderCats(root, keys) {
+    // 管理行:新建自建分类
+    const mg = root.createDiv({ cls: "bqb-catmg" });
+    const input = mg.createEl("input", { cls: "bqb-catmg-input", attr: { type: "text", placeholder: "新分类名…" } });
+    const add = mg.createEl("button", { cls: "bqb-catmg-add", text: "创建" });
+    add.addEventListener("click", () => {
+      const name = input.value.trim();
+      if (!name) return;
+      const cats = this.plugin.settings.favCats || [];
+      if (!cats.includes(name)) cats.push(name);
+      this.plugin.settings.favCats = cats;
+      this.plugin.saveSettings();
+      this.render();
+    });
+    // 按分类分组(独立 catAssign,未收藏的题同样归位);未归类的进「未分类」。
+    // 空分类也直接出现(建好即显示,不必先有题)
+    const groups = new Map();
+    const defs = this.plugin.settings.favCats || [];
+    const assign = this.plugin.settings.catAssign || {};
+    for (const key of keys) {
+      const cs = (assign[key] || []).filter((c) => defs.includes(c));
+      if (!cs.length) {
+        if (!groups.has(null)) groups.set(null, []);
+        groups.get(null).push(key);
+      } else {
+        for (const c of cs) {
+          if (!groups.has(c)) groups.set(c, []);
+          groups.get(c).push(key);
+        }
+      }
+    }
+    const ordered = defs.map((c) => [c, groups.get(c) || []]);
+    ordered.push([null, groups.get(null) || []]); // 未分类恒显示
+    for (const [c, rows] of ordered) {
+      this.grpBox(root, c === null ? "未分类" : c, rows, c);
+    }
+  }
+
+  // 可折叠分组框;delName 非 null = 自建分类(可删,删除同时从各条目 cats 里清掉,不取消收藏)
+  grpBox(root, title, rows, delName) {
+    const grp = root.createDiv({ cls: "bqb-favgrp" });
+    const grpHead = grp.createDiv({ cls: "bqb-favgrp-head" });
+    grpHead.setText(title + " · " + rows.length);
+    if (delName !== null) {
+      const del = grpHead.createEl("a", { cls: "bqb-favgrp-del clickable-icon", attr: { "aria-label": "删除此分类(不取消收藏)" } });
+      setIcon(del, "x");
+      del.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.plugin.settings.favCats = (this.plugin.settings.favCats || []).filter((c) => c !== delName);
+        // 删分类同时从各条目的分类归属里清掉(不取消收藏)
+        const assign = this.plugin.settings.catAssign || {};
+        for (const k of Object.keys(assign)) {
+          assign[k] = (assign[k] || []).filter((x) => x !== delName);
+          if (!assign[k].length) delete assign[k];
+        }
+        this.plugin.settings.catAssign = assign;
+        this.plugin.saveSettings();
+        this.render();
+      });
+    }
+    const body = grp.createDiv({ cls: "bqb-favgrp-body" });
+    grpHead.addEventListener("click", () => this.foldGrp(grp, body));
+    for (const r of rows) this.favRow(body, r, lookupId(r));
+  }
+
+  // 跳转源笔记:在主区 markdown 叶子里打开(弹窗先关,主区切到目标);文件查找走 app.vault(workspace.vault 不可靠)。
+  jump(path) {
+    const app = this.plugin.app;
+    if (studyPanel) studyPanel.close(); // 切走后弹窗收起,主区干净露出目标
+    const f = app.vault.getAbstractFileByPath(path);
+    if (!f) {
+      new Notice("Better Quiz Box: 找不到 " + path);
+      return;
+    }
+    const ws = app.workspace;
+    const md = ws.getLeavesOfType("markdown");
+    const leaf = md.length ? md[md.length - 1] : ws.getLeaf(true);
+    Promise.resolve(leaf.openFile(f))
+      .then(() => ws.revealLeaf(leaf))
+      .catch((e) => {
+        console.error("[bqb] jump:", e);
+        new Notice("Better Quiz Box: 打开失败 " + path);
+      });
   }
 }
 
@@ -476,28 +998,51 @@ export default class QuizBlockPlugin extends Plugin {
     }
     // 兼容旧数据:补齐收藏按钮微调配置
     this.settings.favBtn = Object.assign({}, DEFAULT_SETTINGS.favBtn, this.settings.favBtn);
-    // 兼容旧数据:收藏以前按卡片 key 存(文件<NUL>id 或无 id 块的内容串);现按题目 id 登记。
-    // 迁移:含分隔符的 key 取最后一段(id);内容串(含 SOH 分隔)无法归属到 id,丢弃。
-    this.settings.favorites = [...new Set((this.settings.favorites || [])
-      .map((k) => String(k))
-      .map((k) => (k.includes(KEY_FILE_SEP) ? k.split(KEY_FILE_SEP).pop() : k))
-      .filter((k) => k && !k.includes(KEY_PART_SEP)))];
+    // 兼容旧数据:收藏以前是字符串数组(卡片 key 或裸 id),现升级为 id → 结构体对象。
+    // 迁移:新对象格式保留(仅补缺省字段);旧数组逐条取 id(剥文件前缀,内容串丢弃)→ 对象。
+    const now = Date.now();
+    const normId = (k) => {
+      const s = String(k);
+      const id = s.includes(KEY_FILE_SEP) ? s.split(KEY_FILE_SEP).pop() : s;
+      return id && !id.includes(KEY_PART_SEP) ? id : null;
+    };
+    const favObj = {};
+    const cur = this.settings.favorites || {};
+    if (Array.isArray(cur)) {
+      for (const k of cur) {
+        const id = normId(k);
+        if (id && !favObj[id]) favObj[id] = { addedAt: now, reviews: [] };
+      }
+    } else {
+      for (const [id, rec] of Object.entries(cur)) {
+        if (!id) continue;
+        favObj[id] = Object.assign({ addedAt: now, reviews: [] }, rec && typeof rec === "object" ? rec : {});
+      }
+    }
+    this.settings.favorites = favObj;
+    // 分类改为独立存储(全库题目都可归类):旧收藏结构体里的 cats 迁到 catAssign 并从结构体移除
+    const assign = (this.settings.catAssign && typeof this.settings.catAssign === "object" && !Array.isArray(this.settings.catAssign))
+      ? this.settings.catAssign : {};
+    for (const [id, rec] of Object.entries(this.settings.favorites)) {
+      if (Array.isArray(rec.cats) && rec.cats.length && !assign[id]) {
+        assign[id] = rec.cats.filter((c) => typeof c === "string" && c);
+      }
+      delete rec.cats;
+    }
+    this.settings.catAssign = assign;
+    // 补齐自建分类清单(默认空,用户在「分类」页新建)
+    this.settings.favCats = Array.isArray(this.settings.favCats) ? this.settings.favCats : [];
+    // 复习排期表与每日热力表(stored 持久化;键为题目 id / YYYY-MM-DD)。旧数据没有 → 空对象
+    if (!this.settings.study || typeof this.settings.study !== "object" || Array.isArray(this.settings.study)) this.settings.study = {};
+    if (!this.settings.activity || typeof this.settings.activity !== "object" || Array.isArray(this.settings.activity)) this.settings.activity = {};
     this.applyButtonVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     setLogHook((...a) => this.debugLog(...a));
     // 处理器先注册(块立即可渲;绑定 miss 的也登记,live 补渲兜底)
     registerQuizProcessor(this);
     this.setupVaultListeners();
-    // 收藏夹视图(测试用):左侧栏星图标唤出
-    this.registerView(FAV_VIEW_TYPE, (leaf) => new FavoritesView(leaf, this));
-    this.addRibbonIcon("star", "收藏夹(测试)", async () => {
-      const ws = this.app.workspace;
-      const leaf = ws.getLeavesOfType(FAV_VIEW_TYPE)[0] || ws.getRightLeaf(false);
-      if (!leaf) return;
-      await leaf.setViewState({ type: FAV_VIEW_TYPE, active: true });
-      ws.revealLeaf(leaf);
-      if (leaf.view instanceof FavoritesView) leaf.view.renderList();
-    });
+    // 收藏夹/复习独立窗口:像 SR 闪卡复习那样用 modal 弹窗(非标签页、非侧栏)。点星图标打开/聚焦。
+    this.addRibbonIcon("star", "Better Quiz Box", () => openPanel(this));
     // 索引必须等 vault 就绪(onload 时 getMarkdownFiles() 还是 0,过早建索引=空索引)
     this.app.workspace.onLayoutReady(async () => {
       // ensureIndexForMiss 已建过(启动竞态保险先跑)就不重复全库重建
@@ -584,6 +1129,9 @@ export default class QuizBlockPlugin extends Plugin {
       return r ? r.t : null;
     };
     buildIndex(files, readFn);
+    // 索引建完刷新已打开的收藏夹:收藏夹叶子可能在索引就绪前就被恢复渲染,
+    // 当时不查询不到源题(启动竞态),这里补一拍让它显示出真实条目
+    refreshFavViews(this);
   }
 
   /* —— 单文件变更管线 —— */
@@ -713,8 +1261,8 @@ export default class QuizBlockPlugin extends Plugin {
       for (const ref of this._vaultRefs) this.app.vault.offref(ref);
       this._vaultRefs = null;
     }
+    if (studyPanel) { try { studyPanel.close(); } catch (e) {} studyPanel = null; }
     resetTransientState();
     clearIndex();
-    this.app.workspace.detachLeavesOfType(FAV_VIEW_TYPE);
   }
 }

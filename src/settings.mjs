@@ -17,7 +17,11 @@ export const DEFAULT_SETTINGS = {
 	renumberExclude: "", // 重新编号屏蔽目录(每行一个路径)
 	btnSubmit: { mix: 65, hover: 0.04, fg: "white", bold: false }, // 提交按钮外观(混色%/悬停±/字色/字重)
 	btnReset: { mix: 25, hover: -0.04, fg: "black", bold: false }, // 重置按钮外观
-	favorites: [], // 已收藏的题目 id 列表(按 id 登记:bind/copy 镜像与源题共享同一收藏;收藏夹视图读取)
+	favorites: {}, // 收藏:题目 id → { addedAt 收藏时间, reviews 复习记录(接口预留) }(bind/copy 镜像与源题共享同一收藏)
+	favCats: [], // 自建分类名单(收藏夹「分类」页管理)
+	catAssign: {}, // 分类归属:题目 id → [分类名](独立于收藏,未收藏的题也能归类)
+	study: {}, // 复习排期:题目 id → { reviews: [{ t 复习时间戳, ok 答对? }] }(全库题都有,独立于收藏)
+	activity: {}, // 每日复习数:"YYYY-MM-DD" → n(主页热力图数据源)
 	favBtn: { size: 24, editDX: 0, readDX: -3, readDY: -9 }, // 收藏按钮微调:尺寸px/编辑横向/阅读横向/阅读纵向
 	idMode: "auto", // manual | auto(user 偏好自动分配)
 	idLength: 6, // 3..9(user 偏好 6 位)

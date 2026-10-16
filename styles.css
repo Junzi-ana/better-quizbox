@@ -425,11 +425,19 @@
     background-color: var(--background-modifier-hover);
 }
 
-/* 列表星:外观同样全权交给 .clickable-icon;这里只管常显与已收藏着色 */
+/* 列表星:外观同样全权交给 .clickable-icon;这里只管常显/已收藏着色/未收藏变淡 */
 .bqb-favlist-star {
     flex: none;
     opacity: 1;
     color: var(--text-accent);
+}
+
+.bqb-favlist-star.bqb-fav-off {
+    opacity: 0.45;
+}
+
+.bqb-favlist-star.bqb-fav-off:hover {
+    opacity: 1;
 }
 
 .bqb-favlist-star svg {
@@ -500,4 +508,417 @@
     margin-left: 6px;
     padding-left: 8px;
     margin-bottom: 6px;
+}
+
+/* ===== 收藏夹:标签页 / 时间 / 分类 ===== */
+/* 顶栏:计数居左 + 「显示收藏」开关在右上角 */
+.bqb-favbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bqb-favbar .bqb-favlist-head {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.bqb-showfav {
+    flex: none;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 0.8em;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-muted);
+    background-color: transparent;
+    transition: color 0.1s ease, border-color 0.1s ease;
+}
+
+.bqb-showfav:hover {
+    color: var(--text-normal);
+}
+
+.bqb-showfav--on {
+    color: var(--text-accent);
+    border-color: var(--text-accent);
+    font-weight: 600;
+}
+
+.bqb-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+    margin-top: 6px;
+}
+
+.bqb-tab {
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    user-select: none;
+}
+
+.bqb-tab:hover {
+    color: var(--text-normal);
+}
+
+.bqb-tab--on {
+    color: var(--text-accent);
+    border-bottom-color: var(--text-accent);
+    font-weight: 600;
+}
+
+.bqb-favlist-time {
+    color: var(--text-muted);
+}
+
+.bqb-favlist-cat {
+    background-color: var(--background-secondary);
+    border-radius: 3px;
+    padding: 0 5px;
+}
+
+.bqb-favlist-catbtn {
+    flex: none;
+    opacity: 0.6;
+}
+
+.bqb-favlist-row:hover .bqb-favlist-catbtn {
+    opacity: 1;
+}
+
+/* 分类管理行:输入 + 添加 */
+.bqb-catmg {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.bqb-catmg-input {
+    flex: 1;
+}
+
+.bqb-catmg-add {
+    flex: none;
+}
+
+/* 分组头删除按钮(仅自建分类):排到行最右 */
+.bqb-favgrp-del {
+    margin-left: auto;
+    opacity: 0.6;
+}
+
+.bqb-favgrp-del:hover {
+    opacity: 1;
+}
+
+/* ===== 学习面板(modal 独立窗口):主页 / 复习页 ===== */
+.bqb-study-modal {
+    width: min(680px, 92vw);
+    height: min(78vh, 720px);
+}
+
+/* 弹窗内滚动区 */
+.bqb-study-modal .modal-content {
+    overflow-y: auto;
+}
+
+/* 主页问候语 */
+.bqb-study-greet {
+    font-size: 1.35em;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 4px 0 2px;
+}
+
+/* 统计四格 */
+.bqb-study-stats {
+    display: flex;
+    gap: 10px;
+    margin: 10px 0 12px;
+}
+
+.bqb-study-stat {
+    flex: 1;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 10px 6px 8px;
+    text-align: center;
+}
+
+.bqb-study-stat-num {
+    font-size: 1.5em;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-accent);
+    line-height: 1.2;
+}
+
+.bqb-study-stat-label {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+}
+
+/* 进度条:已学习 / 总数 */
+.bqb-study-bar {
+    height: 8px;
+    border-radius: 4px;
+    background-color: var(--background-modifier-border);
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+
+.bqb-study-bar-fill {
+    height: 100%;
+    min-width: 0;
+    border-radius: 4px;
+    background-color: var(--text-accent);
+    transition: width 0.3s ease;
+}
+
+/* 区块小标题(热力图等) */
+.bqb-study-sec {
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin: 2px 0 8px;
+    letter-spacing: 0.04em;
+}
+
+/* ===== 热力图(仿 GitHub 贡献图):星期列 | 热力主体(月份行+格子行) | 信息面板 ===== */
+.bqb-study-heatwrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+/* 左列星期标签(一/三/五):第一格与月份行同高,后续 7 格与格子行 7 行对齐 */
+.bqb-study-heat-days {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 16px;
+    flex: none;
+}
+
+.bqb-study-heat-wlabel {
+    height: 13px;
+    font-size: 0.68em;
+    line-height: 13px;
+    color: var(--text-muted);
+}
+
+/* 热力主体:月份行在上、格子行在下,同一容器同列宽同 gap → 天然对齐 */
+.bqb-study-heat-main {
+    flex: none;
+}
+
+/* 月份行:固定 13px 高 + 3px 下边距,与星期列首格(13px + gap 3px)精确对齐 */
+.bqb-study-heat-months {
+    display: flex;
+    gap: 3px;
+    height: 13px;
+    margin-bottom: 3px;
+}
+
+.bqb-study-heat-mlabel {
+    width: 13px;
+    flex: none;
+    font-size: 0.68em;
+    line-height: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: visible;
+}
+
+.bqb-study-heat-grid {
+    display: flex;
+    gap: 3px;
+}
+
+.bqb-study-heat-col {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.bqb-study-heat-cell {
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    background-color: var(--background-modifier-border);
+    transition: transform 0.1s ease;
+}
+
+/* 今日格子:accent 细边,一眼找到(优先级低于悬停,悬停时统一显示普通描边) */
+.bqb-study-heat-cell.bqb-heat-today {
+    outline: 1px solid var(--text-accent);
+    outline-offset: -1px;
+}
+
+/* 悬停:仅描边反馈(不用 title 原生提示,避免与 Windows 系统 tooltip 双叠);
+   放在 today 之后,使今日格悬停也显示与其它日期一致的描边 */
+.bqb-study-heat-cell:hover {
+    outline: 1px solid var(--text-normal);
+    outline-offset: -1px;
+}
+
+/* 热力五级:0(淡)/1/2+/4+/8+,主题色 accent 由淡到满(不写死色相) */
+.bqb-study-heat-cell.bqb-heat-lv0 { background-color: var(--background-modifier-border); opacity: 0.4; }
+.bqb-study-heat-cell.bqb-heat-lv1 { background-color: var(--text-accent); opacity: 0.3; }
+.bqb-study-heat-cell.bqb-heat-lv2 { background-color: var(--text-accent); opacity: 0.55; }
+.bqb-study-heat-cell.bqb-heat-lv3 { background-color: var(--text-accent); opacity: 0.8; }
+.bqb-study-heat-cell.bqb-heat-lv4 { background-color: var(--text-accent); opacity: 1; }
+
+/* 右侧信息面板:默认显示今天,悬停某格切换成那一天 */
+.bqb-study-heat-info {
+    flex: 1;
+    min-width: 120px;
+    align-self: center;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.bqb-study-hi-title {
+    font-size: 0.85em;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.bqb-study-hi-line {
+    font-size: 0.78em;
+    color: var(--text-muted);
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.bqb-study-hi-line--ok {
+    color: var(--text-normal);
+}
+
+/* 两个入口按钮(复习/题库) */
+.bqb-study-entries {
+    display: flex;
+    gap: 10px;
+}
+
+.bqb-study-go {
+    flex: 1;
+    padding: 10px 0;
+    font-size: 1em;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    cursor: pointer;
+}
+
+/* 悬停略微加深(不用 interactive-accent-hover,那个跳变太狠) */
+.bqb-study-go:hover {
+    filter: brightness(0.93);
+}
+
+/* 复习页头部(返回 + 第几题 + 徽标) */
+.bqb-study-rvhead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+/* 新/旧徽标:两种统一用新卡的同款样式(细边框 + 主题色字 + 淡底),文案区分含义 */
+.bqb-study-rvbadge {
+    margin-left: auto;
+    font-size: 0.95em;
+    font-weight: 600;
+    padding: 1px 10px;
+    border-radius: 10px;
+    color: var(--text-accent);
+    background-color: var(--background-secondary);
+    border: 1px solid var(--text-accent);
+}
+
+/* 复习题卡:正牌 quiz-block 嵌在里面(样式走 .quiz-* 全套) */
+.bqb-study-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 12px;
+    background-color: var(--background-primary);
+}
+
+/* 判定后的"下次复习时刻"(紧跟正牌判定横幅之下) */
+.bqb-study-rvnext {
+    margin-top: 8px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+/* 下一题/完成按钮 */
+.bqb-study-next {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px 0;
+    border-radius: 6px;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.bqb-study-next:hover {
+    filter: brightness(0.93);
+}
+
+/* 完成页 */
+.bqb-study-done {
+    color: var(--text-muted);
+    margin-bottom: 14px;
+}
+
+/* 空态 */
+.bqb-study-empty {
+    color: var(--text-muted);
+    padding: 20px 0;
+    text-align: center;
+}
+
+/* 题库页返回按钮 */
+.bqb-study-back {
+    flex: none;
+    color: var(--text-muted);
+}
+
+/* 题库行学习状态芯片:待学习/待复习/下次时刻 */
+.bqb-favlist-state {
+    border-radius: 3px;
+    padding: 0 5px;
+    background-color: var(--background-secondary);
+}
+
+.bqb-favlist-state.bqb-state-due {
+    color: var(--color-orange);
+    font-weight: 600;
+}
+
+.bqb-favlist-state.bqb-state-learn {
+    color: var(--text-muted);
+}
+
+.bqb-favlist-state.bqb-state-new {
+    color: var(--text-faint);
 }
