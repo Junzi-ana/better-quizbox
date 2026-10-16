@@ -1,9 +1,9 @@
 {
 	"id": "better-quizbox",
 	"name": "Better Quiz Box",
-	"version": "4.0.1",
+	"version": "4.0.2",
 	"minAppVersion": "0.15.0",
-	"description": "Interactive multiple-choice quiz blocks with transient-only answering (notes are never modified), submit-and-grade flow for non-immediate mode, Markdown/LaTeX support, static/immediate/non-immediate modes, option shuffling, and order binding for spaced-repetition review.",
+	"description": "Create interactive multiple-choice quiz blocks and have reviews and exams.",
 	"author": "Junzi-ana",
 	"authorUrl": "https://github.com/Junzi-ana",
 	"fundingUrl": "",
