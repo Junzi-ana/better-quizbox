@@ -1,138 +1,7 @@
-# Better Quiz Box
-
-Multiple-choice quiz blocks for [Obsidian](https://obsidian.md). Click the options to answer — your answers live in memory only, so the note itself is never modified. Questions, options, and explanations all render through Obsidian's Markdown renderer, so LaTeX works everywhere.
-
-Built to pair with the [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) plugin: when a flashcard flips to its back, the option order and your previous answers survive the re-render.
-
-**English** | [中文](#中文)
-
----
-
-## Example
-
-````markdown
-```quiz
-<!-- mode: non-immediate -->
-What is $\int_0^1 x \, dx$?
-
-[ ] $\frac{1}{3}$
-[c] $\frac{1}{2}$
-[ ] $1$
-[h] The antiderivative of $x$ is $\frac{x^2}{2}$, evaluated from 0 to 1.
-```
-````
-
-## Features
-
-- Three answer modes: instant judgement, answer-then-check, or a plain static display.
-- Questions, options, and explanations accept multi-line Markdown and LaTeX.
-- Automatic option shuffling, with a stable order shared between card faces.
-- Automatic stable block IDs, with `bind` / `copy` blocks that mirror a question elsewhere and follow its order.
-- Favorite button: a star on each quiz block to bookmark it. Favorites are registered by question id, so a question and all its `bind`/`copy` mirrors share one favorite. A favorites side panel (experimental) lists them grouped by file.
-- Answers never touch the note file — closing the file resets everything.
-- Works in reading view and flashcard review; in the editor it shows as a normal code block.
-- Ships with sensible factory presets (the author's daily configuration) — every setting has a ready-made default out of the box.
-
-## Usage
-
-A quiz is a fenced code block tagged `quiz`:
-
-```
-Question text                      (multi-line, Markdown / LaTeX)
-[ ] distractor
-[c] correct option
-[h] explanation                    (optional, after the last option)
-```
-
-Option markers:
-
-- `[ ]` — an unselected option.
-- `[c]` — the correct option. Two or more `[c]` marks turn a `non-immediate` block into a multi-select.
-- `[h]` — ends the last option and starts the explanation. Lines between the last option and `[h]` become extra lines of that option; leaving out `[h]` treats everything after the last option as the explanation.
-- Legacy `[w]` / `[r]` markers are accepted and treated as unselected.
-
-### Block attributes
-
-Attributes are whole-line HTML comments, one per line, placed anywhere inside the block. The first occurrence wins; later ones are ignored.
-
-| Attribute | Values | Default | Effect |
-|-----------|--------|---------|--------|
-| `mode` | `static` / `immediate` / `non-immediate` | `non-immediate` | Answering behavior |
-| `shuffle` | `on` / `off` | `on` | Option shuffling (dynamic blocks only) |
-| `number` | `abc` / `123` / `none` | `abc` | Display A/B/C or 1/2/3 labels |
-| `id` | auto (counter) or any name | file hash + block number | Identifies a block; auto-assigned to blocks lacking one and never rewritten when the question changes |
-| `bind` | a block id | — | Renders a read-only copy of that question (stem kept by default) |
-| `copy` | a block id | — | Renders an editable copy of that question, keeping its mode |
-| `stem` | `on` / `off` | `on` | Keep the target's stem (both `bind` and `copy` keep it by default) |
-| `submit` | `on` / `off` | `on` | Submit-and-grade button in `non-immediate` mode (off = pure selection, no grading) |
-| `reset` | `auto` / `manual` | `manual` | Auto: resetting happens on page switches; Manual (factory preset): the graded state stays until you press Reset |
-
-Several attributes can share one comment: `<!-- mode: static, number: abc -->`.
-
-Duplicate options (same text, ignoring case and surrounding whitespace) are deduplicated.
-
-### Block IDs, bind and copy
-
-Every dynamic block can carry an `id`. In auto mode (factory preset) a block that has no `id` gets a stable counter id = file-name hash prefix + block number (code length adjustable, default 6). An id, once assigned, is never rewritten: editing the stem or options doesn't change it, so `bind`/`copy` references never break. A "Renumber all block IDs" button in the settings renumbers every block per file from 0 and updates references to match.
-
-A `bind` block renders the target question read-only (correct options highlighted); by default the stem is kept — add `<!-- stem: off -->` to hide it. A `copy` block renders an editable copy that keeps the target's own mode, so you can answer it independently. Both follow the target's current shuffled option order. An id that can't be resolved simply renders the block as a normal question. `bind`/`copy` blocks themselves get no id.
-
-### Modes
-
-| Mode | Behavior | Typical use |
-|------|----------|-------------|
-| `static` | Correct options highlighted; the block is not clickable | Notes and answer sheets |
-| `immediate` | Every click is judged at once: green ✓ or red ✗ | Quick self-testing |
-| `non-immediate` | Select options, then press the bottom-right **Submit** button to grade: chosen-wrong turns red ✗, missed-correct is revealed green ✓, a verdict line shows the correct answers and your picks; the block locks until Reset. Single- and multiple-answer both work (two or more `[c]` options = multi-select); the explanation expands automatically | Exam-style practice |
-
-## Settings
-
-Settings → Better Quiz Box; explicit block attributes always win:
-
-- **Default answer mode** — `immediate` / `non-immediate` / `static`
-- **Shuffle options by default** — on / off
-- **Default option numbering** — none / A B C / 1 2 3
-- **Grading (non-immediate)** — submit button on/off; reset behavior (`auto` = reset on page switch, `manual` = keep the graded state until Reset); show reset button after grading
-- **Verdict text** — customizable templates for correct/wrong verdicts; `{ans}` inserts the correct-answer letters, `{pick}` your selection
-- **Button appearance (collapsible)** — per-button accent-blend ratio, hover brighten/darken slider, foreground color (auto / anti-auto / white / black), font weight, one-click swap
-- **Block id assignment** — manual / auto (auto assigns a stable counter id to each block lacking one; ids are never rewritten, so editing a question doesn't change its id)
-- **Id code length** — 3–9 characters (default 6); half is the file-name hash, the other half a zero-padded block number, odd lengths give the hash the extra digit
-- **Renumber all block IDs** — renumber every block per file from 0 (references are updated to match; cross-file collisions are avoided automatically; idempotent — repeated clicks finish instantly)
-- **Renumber exclude list** — one path per line; excluded folders/files are skipped when renumbering
-- **Keep stem in bind blocks** — on by default (`<!-- stem: off -->` hides it for a single block)
-- **Favorite button** — size, and edit/reading-view offset nudges; button position adapts automatically in editing view
-- **Favorites panel** — open from the star icon in the left ribbon; lists favorite questions grouped by file with their id and stem preview, collapsible groups, per-group counts; clicking a row jumps to the source note
-
-Changes apply to newly rendered blocks; already-rendered ones stay as they are. A block can always override a default with its own attribute, e.g. `<!-- number: none -->` turns numbering off for that block even when a default is set.
-
-## Installation
-
-Manual: grab `main.js`, `manifest.json`, and `styles.css` from the latest [release](../../releases), put them into `<vault>/.obsidian/plugins/better-quizbox/`, then enable the plugin under Settings → Community plugins.
-
-Or with [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `Junzi-ana/better-quizbox` as a beta plugin.
-
-## Development
-
-```bash
-npm install
-npm run build
-```
-
-The build bundles `src/` into `main.js` at the repository root. To cut a release, push a plain version tag (no `v` prefix, e.g. `3.0.0`) — GitHub Actions builds the plugin and drafts a release with `main.js`, `manifest.json`, and `styles.css` attached.
-
-## License
-
-[MIT](LICENSE)
-
----
-
-<div align="right"><a href="#better-quiz-box">Back to top ↑</a></div>
 
 ## 中文
 
-[Obsidian](https://obsidian.md) 的多项选择题块插件。点击选项即可作答，答案只保存在内存中，笔记文件不会被改动。题干、选项、解析都经由 Obsidian 的 Markdown 渲染，LaTeX 公式随处可用。
-
-专为配合 [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) 插件的复习流程而设计：记忆卡翻面重渲染时，选项顺序与已作答的内容都会保留。
+在 [Obsidian](https://obsidian.md) 文档中创建可交互的选择题，且作答时笔记文件不会改动。题干、选项、解析都支持 markdown 原生格式。本插件设计之初是为了配合 [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) 插件制作选择题形式的闪卡。目前原生 UI 开发中，仍将保留对 Spaced Repetition 插件的支持。
 
 [English](#better-quiz-box) | **中文**
 
@@ -142,6 +11,7 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 ````markdown
 ```quiz
+<!-- id: sok013 -->
 <!-- mode: non-immediate -->
 求 $\int_0^1 x \, dx$。
 
@@ -154,14 +24,12 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 ### 特性
 
-- 三种作答模式：即时判分、先答后查、纯静态展示。
+- 三种作答模式：即时判分、先选后提交、纯静态展示。
 - 题干、选项、解析均支持多行 Markdown 与 LaTeX。
-- 选项自动打乱，正反面共享同一顺序。
-- 自动稳定的块 id（计数器编号，永不改写）；`bind` / `copy` 块可在他处镜像某道题并跟随其顺序。
-- 收藏按钮：每道题右上角的星，收藏/取消收藏。收藏按题目 id 登记——源题与其所有 `bind`/`copy` 镜像共享同一个收藏。侧栏「收藏夹(测试)」面板按文件分组列出，带 id、题干缩略与折叠计数。
-- 作答不触碰笔记文件——关闭文件即自动复位。
-- 阅读视图与闪卡复习中可用；编辑器中显示为普通代码块。
-- 出厂即带作者日常配置预设，装好就有可用的默认设置。
+- 支持选项自动打乱。
+- 每个块分配唯一的 id，支持通过 `bind` / `copy` 在他处镜像某道题目并跟随其选项顺序。
+- 支持收藏题目，并建立收藏夹（**收藏夹、复习相关功能仍在开发中**）
+- 交互过程不改写笔记文件。
 
 ### 用法
 
@@ -171,49 +39,32 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 题干                                （多行，Markdown / LaTeX）
 [ ] 干扰项
 [c] 正确选项
-[h] 解析                            （可选，位于最后一个选项之后）
+[h] 提示 / 解析                            （可选，位于最后一个选项之后）
 ```
 
 选项标记：
 
 - `[ ]` —— 未选中的选项。
 - `[c]` —— 正确选项。出现两个及以上 `[c]` 时，`non-immediate` 块转为多选。
-- `[h]` —— 结束最后一个选项、开始解析。最后一个选项与 `[h]` 之间的行会并入该选项；省略 `[h]` 时，最后一个选项之后的全部内容都视为解析。
-- 兼容旧写法 `[w]` / `[r]`，一律按未选处理。
+- `[h]` —— 结束最后一个选项、开始解析。省略 `[h]` 时，最后一个选项下一行的全部内容都视为解析。
+
+文本相同的选项会被去重。
 
 ### 块属性
 
-块属性是一整行的 HTML 注释，每行一条，写在块内任意位置。首个出现的生效，后续重复的被忽略。
+块属性是一整行的 HTML 注释，多条属性可以共用一行注释，例如 `<!-- mode: static, number: abc -->`。
 
-| 属性 | 取值 | 缺省 | 作用 |
-|------|------|------|------|
-| `mode` | `static` / `immediate` / `non-immediate` | `non-immediate` | 作答行为 |
-| `shuffle` | `on` / `off` | `on` | 打乱选项（仅动态块） |
-| `number` | `abc` / `123` / `none` | `abc` | 显示 A/B/C 或 1/2/3 编号 |
-| `id` | 自动（计数器编号）或任意名字 | 文件 hash + 块号 | 块的标识；自动分配给没有 id 的块，题面变化时永不改写 |
-| `bind` | 某个块的 id | — | 只读渲染该题（默认保留题干） |
-| `copy` | 某个块的 id | — | 可作答渲染该题，保留其模式 |
-| `stem` | `on` / `off` | `on` | 是否保留目标题干 |
-| `submit` | `on` / `off` | `on` | `non-immediate` 模式的提交按钮（关 = 纯作答不出答案） |
-| `reset` | `auto` / `manual` | `manual` | 自动：切页即重置；手动（出厂预设）：批改结果保留到按重置键 |
-
-多条属性可以共用一行注释：`<!-- mode: static, number: abc -->`。
-
-文本相同的选项（忽略大小写与首尾空白）会被去重。
-
-### 块 id、bind 与 copy
-
-每个动态块都可以带一个 `id`。自动模式（出厂预设）下，没有 id 的块会得到一个**稳定的计数器编号** = 文件名 hash 前缀 + 块号（码长可调，缺省 6）。id 一旦分配**永不改写**：改题干或选项都不会改变它，所以 `bind`/`copy` 引用永远不会失效。设置里的「全库重新编号」按钮会逐文件从 0 重编所有块，并同步更新引用。
-
-`bind` 块只读渲染目标题（正确项高亮），默认保留题干，写 `<!-- stem: off -->` 可隐藏；`copy` 块渲染可作答的副本，保留目标自身的模式，可以独立作答。两者都跟随目标题当前的打乱顺序。id 无法解析时，该块按普通题渲染。`bind`/`copy` 块本身不分配 id。
-
-### 三种模式
-
-| 模式 | 行为 | 适用场景 |
-|------|------|----------|
-| `static` | 高亮正确选项，块不可点击 | 笔记、答案页 |
-| `immediate` | 每次点击立即判分：对绿 ✓、错红 ✗ | 快速自测 |
-| `non-immediate` | 选中选项后按右下角**提交**按钮批改：错选红 ✗、漏选绿 ✓ 揭示，横幅显示正确答案与你的选择；批改后锁定到重置。单选多选都行（两个及以上 `[c]` 转多选）；解析自动展开 | 考试式练习 |
+| 属性        | 取值                                       | 缺省              | 作用                                |
+| --------- | ---------------------------------------- | --------------- | --------------------------------- |
+| `mode`    | `static` / `immediate` / `non-immediate` | `non-immediate` | 作答行为                              |
+| `shuffle` | `on` / `off`                             | `on`            | 打乱选项（仅非静态块）                       |
+| `number`  | `abc` / `123` / `none`                   | `abc`           | 显示 A/B/C 或 1/2/3 编号               |
+| `id`      | 自动编号或任意名字                                | 自动编号            | 块的标识，自动分配给没有 id 的块                |
+| `bind`    | 某个块的 id                                  | —               | 只读渲染该题                            |
+| `copy`    | 某个块的 id                                  | —               | 可作答渲染该题，保留其模式                     |
+| `stem`    | `on` / `off`                             | `on`            | 保留目标题干 / 只渲染选项                    |
+| `submit`  | `on` / `off`                             | `on`            | 若关闭，则 `non-immediate` 模式只能交互，无法批改 |
+| `reset`   | `auto` / `manual`                        | `manual`        | `submit` 开启时，批改后是否自动重置            |
 
 ## 设置
 
@@ -222,16 +73,15 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 - **默认作答模式**——`immediate` / `non-immediate` / `static`
 - **默认打乱选项**——开 / 关
 - **默认选项编号**——无 / ABC / 123
-- **批改（先选后查）**——提交按钮开关；重置方式（自动 = 切页即重置，手动 = 保留到按重置）；批改后是否显示重置按钮
-- **批改文案**——判对/判错模板可自定义；`{ans}` = 正确答案字母、`{pick}` = 你的选择
-- **按钮外观（折叠）**——两按钮各自的强调色混合比例、悬停幅度（左右拖动）、字色（自动/反自动/白/黑）、字重，以及一键交换配置
-- **题目 id 分配**——手动 / 自动（自动给没有 id 的块分配稳定的计数器编号；id 永不改写，改题面不变）
-- **id 码长**——3–9 位（缺省 6）；一半文件名 hash、一半块号定长，奇数时多一位 hash
-- **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开；幂等，重复点击瞬时完成）
+- **批改**—— `non-immediate` 是否可提交批改，若关闭则只有基础的选择交互，用于作为闪卡的正面
+- **批改文案**——判对/判错模板可自定义；`{ans}` = 正确答案、`{pick}` = 你的选择（为非中文母语者提供）
+- **按钮外观（折叠）**——开发测试用，已调好，勿动
+- **题目 id 分配**——手动 / 自动（自动给没有 id 的块分配稳定的计数器编号）
+- **id 码长**——3–9 位
+- **全库重新编号**——逐文件从 0 连续重编所有块的 id（引用自动同步，跨文件撞号自动错开）
 - **重新编号屏蔽目录**——每行一个路径，重新编号时跳过
 - **bind 块保留题干**——缺省开（单块写 `<!-- stem: off -->` 可关）
-- **收藏按钮**——尺寸、编辑/阅读视图偏移微调；编辑视图下按钮位置自动避开右上角其他图标
-- **收藏夹面板**——左侧栏星图标唤出；按文件分组列出收藏题，含 id 与题干缩略、分组折叠与计数；点击行跳转到源笔记
+- **收藏按钮**——开发测试用，已调好，勿动
 
 改动只影响之后渲染的块，已在页面上的不变。块内可以用自己的属性覆盖缺省，例如设了默认编号后，单个块写 `<!-- number: none -->` 即可关掉编号。
 
@@ -241,15 +91,104 @@ The build bundles `src/` into `main.js` at the repository root. To cut a release
 
 或通过 [BRAT](https://github.com/TfTHacker/obsidian42-brat)：添加 `Junzi-ana/better-quizbox` 为 beta 插件。
 
-## 开发
+## 许可
 
-```bash
-npm install
-npm run build
+[MIT](LICENSE)
+
+---
+
+# Better Quiz Box
+
+Create interactive multiple-choice quiz blocks in your [Obsidian](https://obsidian.md) notes — answering never modifies the note file. Stems, options and explanations all support native Markdown. The plugin was originally designed to make multiple-choice flashcards for the [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) plugin. A native UI is currently in development; support for the Spaced Repetition plugin will be retained.
+
+**English** | [中文](#中文)
+
+---
+
+### Example
+
+````markdown
+```quiz
+<!-- id: sok013 -->
+<!-- mode: non-immediate -->
+求 $\int_0^1 x \, dx$。
+
+[ ] $\frac{1}{3}$
+[c] $\frac{1}{2}$
+[ ] $1$
+[h] $x$ 的原函数是 $\frac{x^2}{2}$，代入上下限计算。
+```
+````
+
+### Features
+
+- Three answering modes: instant grading, select-then-submit, and static display.
+- Stems, options and explanations support multi-line Markdown and LaTeX.
+- Options can be shuffled automatically.
+- Every block gets a unique id; `bind` / `copy` mirror a question elsewhere and follow its option order.
+- Favorite questions and organize them in a favorites panel (**favorites and review features are still in development**)
+- Answering never rewrites the note file.
+
+### Usage
+
+A question is a `quiz` fenced code block:
+
+```
+stem                                (multi-line, Markdown / LaTeX)
+[ ] distractor
+[c] correct option
+[h] hint / explanation              (optional, after the last option)
 ```
 
-构建会把 `src/` 打包为仓库根目录下的 `main.js`。发版时打一个纯版本号的 tag（不带 `v` 前缀，如 `3.0.0`），GitHub Actions 会自动构建并创建附带 `main.js`、`manifest.json`、`styles.css` 的草稿 Release。
+Option markers:
 
-## 许可
+- `[ ]` — an unselected option.
+- `[c]` — the correct option. With two or more `[c]`, a `non-immediate` block becomes multiple-choice.
+- `[h]` — ends the last option and starts the explanation. Without `[h]`, everything on the lines after the last option is treated as the explanation.
+
+Options with identical text are deduplicated.
+
+### Block attributes
+
+Block attributes are full-line HTML comments; several attributes can share one comment, e.g. `<!-- mode: static, number: abc -->`.
+
+| Attribute | Values                                   | Default         | Purpose                                                  |
+| --------- | ---------------------------------------- | --------------- | -------------------------------------------------------- |
+| `mode`    | `static` / `immediate` / `non-immediate` | `non-immediate` | Answering behavior                                       |
+| `shuffle` | `on` / `off`                             | `on`            | Shuffle options (non-static blocks only)                 |
+| `number`  | `abc` / `123` / `none`                   | `abc`           | Show A/B/C or 1/2/3 numbering                            |
+| `id`      | auto number or any name                  | auto number     | Block identity; auto-assigned to blocks without an id    |
+| `bind`    | the id of another block                  | —               | Render that question read-only                           |
+| `copy`    | the id of another block                  | —               | Render it answerable, keeping its mode                   |
+| `stem`    | `on` / `off`                             | `on`            | Keep the target stem / render options only               |
+| `submit`  | `on` / `off`                             | `on`            | If off, `non-immediate` blocks stay interactive, no grading |
+| `reset`   | `auto` / `manual`                        | `manual`        | With `submit` on, whether to auto-reset after grading    |
+
+## Settings
+
+Settings → Better Quiz Box; explicit block attributes always win:
+
+- **Default mode** — `immediate` / `non-immediate` / `static`
+- **Shuffle options** — on / off
+- **Option numbering** — none / ABC / 123
+- **Grading** — whether `non-immediate` blocks can be submitted for grading; if off, only basic selection interaction remains, useful as the front of a flashcard
+- **Verdict text** — correct/wrong templates are customizable; `{ans}` = correct answer, `{pick}` = your pick
+- **Button appearance (collapsed)** — for development testing; already tuned, leave as is
+- **Question id assignment** — manual / auto (auto assigns stable counter ids to blocks without one)
+- **ID length** — 3–9 digits
+- **Renumber all** — renumber every block's id from 0, file by file (references update automatically; cross-file collisions are shifted apart)
+- **Excluded paths** — one path per line, skipped when renumbering
+- **Keep stem on bind** — on by default (a single block can opt out via `<!-- stem: off -->`)
+- **Favorite button** — for development testing; already tuned, leave as is
+
+Changes only affect blocks rendered afterwards; blocks already on the page stay as they are. A block can override defaults with its own attributes — e.g. with a default numbering set, a single block can turn numbering off with `<!-- number: none -->`.
+
+## Installation
+
+Manual: download `main.js`, `manifest.json` and `styles.css` from the latest [Release](../../releases) into `<vault>/.obsidian/plugins/better-quizbox/`, then enable the plugin under Settings → Community plugins.
+
+Or via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `Junzi-ana/better-quizbox` as a beta plugin.
+
+## License
 
 [MIT](LICENSE)
