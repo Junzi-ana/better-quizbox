@@ -1,8 +1,9 @@
-/* Better Quiz Box — 设置栏(全中文,分组排布,测试类样式折叠)
+/* Better Quiz Box — 设置栏(双语,分组排布,进阶项折叠)
  * 设置只在块属性未显式给出时生效;块属性显式始终优先;设置只影响之后的渲染。
  */
 
 import { PluginSettingTab, Setting } from "obsidian";
+import { t } from "./i18n.mjs";
 
 export const DEFAULT_SETTINGS = {
 	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
@@ -12,7 +13,7 @@ export const DEFAULT_SETTINGS = {
 	submitEnabled: true, // non-immediate 提交按钮(按下批改并显示正确答案)
 	resetMode: "manual", // user 偏好:跨容器保留批改态直到按重置
 	showReset: true, // 批改后显示重置按钮
-	verdictOk: "回答正确！正确答案：{ans}。", // 判对文案
+	verdictOk: "回答正确！正确答案：{ans}。", // 判对文案(出厂中文;非中文界面显示时自动切英文,见 main.verdictTexts)
 	verdictBad: "回答错误！正确答案：{ans}，你的选择：{pick}。", // 判错文案({ans}/{pick} 占位)
 	renumberExclude: "", // 重新编号屏蔽目录(每行一个路径)
 	btnSubmit: { mix: 65, hover: 0.04, fg: "white", bold: false }, // 提交按钮外观(混色%/悬停±/字色/字重)
@@ -39,7 +40,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// 折叠分组:标题行点击开合;open = 默认展开(测试类样式默认收起)
+		// 折叠分组:标题行点击开合;open = 默认展开(进阶类样式默认收起)
 		const fold = (title, open = false) => {
 			const wrap = containerEl.createDiv({ cls: "bqb-fold" + (open ? " bqb-open" : "") });
 			const head = new Setting(wrap).setName(title).setHeading().setClass("bqb-fold-head");
@@ -54,16 +55,16 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 		};
 
 		/* ------------ 作答 ------------ */
-		new Setting(containerEl).setName("作答").setHeading();
+		new Setting(containerEl).setName(t("作答")).setHeading();
 
 		new Setting(containerEl)
-			.setName("默认作答模式")
-			.setDesc("块内未写 mode 时生效")
+			.setName(t("默认作答模式"))
+			.setDesc(t("块内未写 mode 时生效"))
 			.addDropdown((drop) =>
 				drop
-					.addOption("immediate", "即时判分(单选,快)")
-					.addOption("non-immediate", "先选后查(单选多选,主打)")
-					.addOption("static", "静态展示")
+					.addOption("immediate", t("即时判分(单选,快)"))
+					.addOption("non-immediate", t("先选后查(单选/多选)"))
+					.addOption("static", t("静态展示"))
 					.setValue(this.plugin.settings.defaultMode)
 					.onChange(async (value) => {
 						this.plugin.settings.defaultMode = value;
@@ -72,8 +73,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("默认打乱选项")
-			.setDesc("块内未写 shuffle 时生效")
+			.setName(t("默认打乱选项"))
+			.setDesc(t("块内未写 shuffle 时生效"))
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.defaultShuffle)
@@ -84,11 +85,11 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("默认选项编号")
-			.setDesc("块内未写 number 时生效")
+			.setName(t("默认选项编号"))
+			.setDesc(t("块内未写 number 时生效"))
 			.addDropdown((drop) =>
 				drop
-					.addOption("none", "无")
+					.addOption("none", t("无"))
 					.addOption("abc", "A B C")
 					.addOption("123", "1 2 3")
 					.setValue(this.plugin.settings.defaultNumbering)
@@ -99,11 +100,11 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		/* ------------ 批改 ------------ */
-		new Setting(containerEl).setName("批改(先选后查)").setHeading();
+		new Setting(containerEl).setName(t("批改(先选后查)")).setHeading();
 
 		new Setting(containerEl)
-			.setName("提交按钮")
-			.setDesc("选中后右下角提交,按下批改并显示答案;关闭则纯作答。块内 submit 可覆盖")
+			.setName(t("提交按钮"))
+			.setDesc(t("批改并显示答案"))
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.submitEnabled)
@@ -114,12 +115,12 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("重置方式")
-			.setDesc("自动:切页即重置;手动:保留到按重置。块内 reset 可覆盖")
+			.setName(t("重置方式"))
+			.setDesc(t("自动:切页自动重置;手动:保留到按重置"))
 			.addDropdown((drop) =>
 				drop
-					.addOption("auto", "自动重置")
-					.addOption("manual", "手动重置")
+					.addOption("auto", t("自动重置"))
+					.addOption("manual", t("手动重置"))
 					.setValue(this.plugin.settings.resetMode)
 					.onChange(async (value) => {
 						this.plugin.settings.resetMode = value;
@@ -128,8 +129,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("批改后显示重置按钮")
-			.setDesc("自动重置下可关;手动重置恒显示")
+			.setName(t("批改后显示重置按钮"))
+			.setDesc(t("自动重置下可关;手动重置恒显示"))
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.showReset)
@@ -139,12 +140,12 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
-		/* -------- 批改文案(测试,折叠) -------- */
-		const vfBody = fold("批改文案(测试)");
+		/* -------- 批改文案(进阶,折叠) -------- */
+		const vfBody = fold(t("批改文案(测试)"));
 
 		new Setting(vfBody)
-			.setName("判对文案")
-			.setDesc("支持占位符 {ans}=正确答案 {pick}=你的选择")
+			.setName(t("判对文案"))
+			.setDesc(t("支持占位符 {ans}=正确答案 {pick}=你的选择"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.verdictOk)
@@ -155,8 +156,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(vfBody)
-			.setName("判错文案")
-			.setDesc("同上;空占位符会被剔除")
+			.setName(t("判错文案"))
+			.setDesc(t("同上;空占位符会被剔除"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.verdictBad)
@@ -167,15 +168,15 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		/* ------------ 题目 ID ------------ */
-		new Setting(containerEl).setName("题目 ID").setHeading();
+		new Setting(containerEl).setName(t("题目 ID")).setHeading();
 
 		new Setting(containerEl)
-			.setName("自动分配")
-			.setDesc("给没有 id 的块分配计数器编号;已分配的永不改写")
+			.setName(t("自动分配"))
+			.setDesc(t("自动给没有 id 的题分配 id"))
 			.addDropdown((drop) =>
 				drop
-					.addOption("manual", "手动")
-					.addOption("auto", "自动")
+					.addOption("manual", t("手动"))
+					.addOption("auto", t("自动"))
 					.setValue(this.plugin.settings.idMode)
 					.onChange(async (value) => {
 						this.plugin.settings.idMode = value;
@@ -184,8 +185,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("id 码长")
-			.setDesc("3–9 位:一半文件名 hash、一半块号,奇数多一位 hash;只影响之后新分配的块")
+			.setName(t("id 码长"))
+			.setDesc(t("只影响新分配的 id"))
 			.addSlider((slider) =>
 				slider
 					.setLimits(3, 9, 1)
@@ -198,19 +199,19 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("全库重新编号")
-			.setDesc("全部 quiz 块按计数器连续重编,引用自动同步")
+			.setName(t("全库重新编号"))
+			.setDesc(t("全部题目重新编号,引用自动同步"))
 			.addButton((btn) =>
-				btn.setButtonText("重新编号").onClick(() => {
-					if (window.confirm("将重写全库 quiz 块的 id,确认执行?")) {
+				btn.setButtonText(t("重新编号")).onClick(() => {
+					if (window.confirm(t("将重写全部题目 id,确认?"))) {
 						this.plugin.renumberAllIds();
 					}
 				})
 			);
 
 		new Setting(containerEl)
-			.setName("重新编号屏蔽目录")
-			.setDesc("每行一个路径(目录或单文件),重新编号时跳过")
+			.setName(t("重新编号屏蔽目录"))
+			.setDesc(t("每行一个路径(目录或单文件),重新编号时跳过"))
 			.addTextArea((area) =>
 				area
 					.setValue(this.plugin.settings.renumberExclude)
@@ -220,15 +221,15 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
-		/* -------- 按钮外观(测试,折叠) -------- */
-		const btnBody = fold("按钮外观(测试)");
+		/* -------- 按钮外观(进阶,折叠) -------- */
+		const btnBody = fold(t("按钮外观(测试)"));
 
-		// 每个按钮 4 项:混色比例 / 悬停(左暗右亮) / 字色(自动|反自动|白|黑) / 字重
+		// 每个按钮 4 项:混色比例 / 悬停(负暗正亮) / 字色(自动|反自动|白|黑) / 字重
 		const btnRow = (key, label) => {
 			const cfg = this.plugin.settings[key];
 			new Setting(btnBody)
-				.setName(`${label} · 强调色混合`)
-				.setDesc("强调色掺入背景的比例,%越大越浓")
+				.setName(`${label} · ${t("强调色混合")}`)
+				.setDesc(t("强调色掺入背景的比例,%越大越浓"))
 				.addSlider((slider) =>
 					slider
 						.setLimits(0, 100, 1)
@@ -241,8 +242,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						})
 				);
 			new Setting(btnBody)
-				.setName(`${label} · 悬停幅度`)
-				.setDesc("左暗右亮;0 = 悬停不变")
+				.setName(`${label} · ${t("悬停幅度")}`)
+				.setDesc(t("负=变暗,正=变亮;0=不变"))
 				.addSlider((slider) =>
 					slider
 						.setLimits(-1, 1, 0.02)
@@ -255,14 +256,14 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						})
 				);
 			new Setting(btnBody)
-				.setName(`${label} · 字色`)
-				.setDesc("自动 = 深色主题近白/浅色主题近黑;反自动相反")
+				.setName(`${label} · ${t("字色")}`)
+				.setDesc(t("自动 = 深色主题近白/浅色主题近黑;反自动相反"))
 				.addDropdown((drop) =>
 					drop
-						.addOption("auto", "自动")
-						.addOption("anti", "反自动")
-						.addOption("white", "白")
-						.addOption("black", "黑")
+						.addOption("auto", t("自动"))
+						.addOption("anti", t("反自动"))
+						.addOption("white", t("白"))
+						.addOption("black", t("黑"))
 						.setValue(cfg.fg || "auto")
 						.onChange(async (v) => {
 							cfg.fg = v;
@@ -271,12 +272,12 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						})
 				);
 			new Setting(btnBody)
-				.setName(`${label} · 字重`)
-				.setDesc("按钮文字加粗与否")
+				.setName(`${label} · ${t("字重")}`)
+				.setDesc(t("按钮文字加粗与否"))
 				.addDropdown((drop) =>
 					drop
-						.addOption("bold", "加粗")
-						.addOption("normal", "常规")
+						.addOption("bold", t("加粗"))
+						.addOption("normal", t("常规"))
 						.setValue(cfg.bold ? "bold" : "normal")
 						.onChange(async (v) => {
 							cfg.bold = v === "bold";
@@ -285,14 +286,14 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						})
 				);
 		};
-		btnRow("btnSubmit", "提交按钮");
-		btnRow("btnReset", "重置按钮");
+		btnRow("btnSubmit", t("提交按钮"));
+		btnRow("btnReset", t("重置按钮"));
 
 		new Setting(btnBody)
-			.setName("交换两按钮配置")
-			.setDesc("提交/重置的外观互换(混色/悬停/字色/字重)")
+			.setName(t("交换两按钮配置"))
+			.setDesc(t("提交与重置按钮的外观互换"))
 			.addButton((btn) =>
-				btn.setButtonText("交换").onClick(async () => {
+				btn.setButtonText(t("交换")).onClick(async () => {
 					const tmp = { ...this.plugin.settings.btnSubmit };
 					this.plugin.settings.btnSubmit = { ...this.plugin.settings.btnReset };
 					this.plugin.settings.btnReset = tmp;
@@ -303,11 +304,11 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		/* -------- 收藏按钮(折叠) -------- */
-		const favBody = fold("收藏按钮");
+		const favBody = fold(t("收藏按钮"));
 
 		new Setting(favBody)
-			.setName("按钮尺寸")
-			.setDesc("按钮边长(px),图标随之缩放")
+			.setName(t("按钮尺寸"))
+			.setDesc(t("按钮边长(px),图标随之缩放"))
 			.addSlider((slider) =>
 				slider
 					.setLimits(16, 36, 1)
@@ -335,16 +336,16 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						})
 				);
 		};
-		favNudge("editDX", "编辑视图 · 横向微调", "在动态读位基础上再偏移(px,可负)");
-		favNudge("readDX", "阅读视图 · 横向微调", "距右缘额外偏移(px,可负)");
-		favNudge("readDY", "阅读视图 · 纵向微调", "距顶额外偏移(px,可负)");
+		favNudge("editDX", t("编辑视图 · 横向微调"), t("在动态读位基础上再偏移(px,可负)"));
+		favNudge("readDX", t("阅读视图 · 横向微调"), t("距右缘额外偏移(px,可负)"));
+		favNudge("readDY", t("阅读视图 · 纵向微调"), t("距顶额外偏移(px,可负)"));
 
 		/* ------------ 其他 ------------ */
-		new Setting(containerEl).setName("其他").setHeading();
+		new Setting(containerEl).setName(t("其他")).setHeading();
 
 		new Setting(containerEl)
-			.setName("绑定默认保留题干")
-			.setDesc("bind 默认藏题干;块内 stem 可覆盖")
+			.setName(t("绑定默认保留题干"))
+			.setDesc(t("bind 默认保留题干"))
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.defaultBindStem)
@@ -355,8 +356,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("调试日志")
-			.setDesc("控制台(过滤 bqb)输出插件事件;排查用")
+			.setName(t("调试日志"))
+			.setDesc(t("控制台(过滤 bqb)输出插件事件;排查用"))
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.debug)

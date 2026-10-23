@@ -2,6 +2,7 @@
  */
 
 import { saveCard, dropCard } from "./state.mjs";
+import { t } from "./i18n.mjs";
 
 /* ------------------------------ 状态机 / 渲染 -------------------------------- */
 
@@ -120,11 +121,11 @@ function setupActions(block, data, ctrl, ansLetters, pickLetters) {
   if (!foot) foot = block.createDiv({ cls: "quiz-actions" });
   if (!foot.querySelector(".quiz-verdict")) foot.createDiv({ cls: "quiz-verdict" });
   if (!foot.querySelector(".quiz-action-btn--submit")) {
-    const submitBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--submit", text: "提交" });
+    const submitBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--submit", text: t("提交") });
     submitBtn.addEventListener("click", () => submitQuiz(block, data, ctrl));
   }
   if (!foot.querySelector(".quiz-action-btn--reset")) {
-    const resetBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--reset", text: "重置" });
+    const resetBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--reset", text: t("重置") });
     resetBtn.addEventListener("click", () => {
       dropCard(ctrl.key); // 重置 = 刷新:清瞬态(顺序+作答+批改态),重渲染后全新重摇
       ctrl.rerender();
@@ -135,8 +136,8 @@ function setupActions(block, data, ctrl, ansLetters, pickLetters) {
     if (data.submitted) {
       // 文案模板由设置提供:{ans}=正确答案字母,{pick}=你的选择字母(均按显示顺序)
       const ok = gradeSummary(data).ok;
-      const tpl = ok ? (data.verdictOk || "回答正确！")
-                     : (data.verdictBad || "回答错误！正确答案：{ans}，你的选择：{pick}");
+      const tpl = ok ? (data.verdictOk || t("回答正确！"))
+                     : (data.verdictBad || t("回答错误！正确答案：{ans}，你的选择：{pick}"));
       const txt = tpl
         .replace(/\{ans\}/g, ansLetters.join(""))
         .replace(/\{pick\}/g, pickLetters.join(""));
