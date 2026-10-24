@@ -406,6 +406,21 @@
     padding-left: 12px;
 }
 
+/* 题型脚本编辑器:全宽、等宽字体、可纵向拉伸的大文本框 */
+.bqb-qtypes-editor .setting-item-control {
+    width: 100%;
+}
+
+.bqb-qtypes-editor textarea {
+    width: 100%;
+    min-height: 320px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.45;
+    resize: vertical;
+    tab-size: 2;
+}
+
 /* ===== 收藏夹视图(测试用,侧栏唤出)===== */
 .bqb-favlist-head {
     color: var(--text-muted);
@@ -906,9 +921,19 @@
     background-color: var(--background-secondary);
 }
 
+/* 待复习:底色=待学习的底(--background-secondary)再混 15% 主题色(不透明,同色相加浓);
+   字=主题色同色相减亮度 10%(hsl 相对颜色,色相不动只加深)。两者都不支持时兜底为待学习样式 */
 .bqb-favlist-state.bqb-state-due {
-    color: var(--color-orange);
-    font-weight: 600;
+    color: hsl(from var(--text-accent) h s calc(l * 0.9));
+    background-color: color-mix(in srgb, var(--text-accent) 15%, var(--background-secondary));
+    font-weight: normal;
+}
+
+@supports not (background: color-mix(in srgb, red, blue)) {
+    .bqb-favlist-state.bqb-state-due {
+        color: var(--text-accent);
+        background-color: var(--background-secondary);
+    }
 }
 
 .bqb-favlist-state.bqb-state-learn {

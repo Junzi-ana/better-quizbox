@@ -268,6 +268,32 @@ export function reviewDue(recs) {
   return last.t + (last.ok ? REVIEW_OK_DAYS : REVIEW_BAD_DAYS) * MK_DAY;
 }
 
+/* ============ 题型(用户脚本判定) ============ */
+// 编译用户脚本:每条 {name, code} → {name, fn}。code 是函数体源码,收到选项数组 o
+// (每项 {optIdx, state("c"=正确), text}),返回真值即命中。语法错误的条目丢弃,不崩。
+export function compileTypeRules(rules) {
+  const out = [];
+  for (const r of rules || []) {
+    if (!r || !r.name || typeof r.code !== "string") continue;
+    try {
+      out.push({ name: r.name, fn: new Function("o", `"use strict";\n${r.code}`) });
+    } catch (e) { /* 语法错误:丢弃该条 */ }
+  }
+  return out;
+}
+
+// 题型判定:按设置顺序首个命中即定型(互斥);用户代码运行错跳过该条;
+// 都不中按正确选项数归单选/多选。
+export function quizTypeOf(opts, compiled) {
+  for (const c of compiled || []) {
+    try {
+      if (c.fn(opts)) return c.name;
+    } catch (e) { /* 运行错误:跳过该条 */ }
+  }
+  const correct = (opts || []).filter((o) => o.state === "c").length;
+  return correct >= 2 ? "多选" : "单选";
+}
+
 /* ============ 收藏夹 / 复习专用独立窗口 ============ */
 // 像 Spaced Repetition 的闪卡复习窗口:一个 modal 弹窗(非侧栏、非标签页),内置
 // 主页(home)/题库(bank)/复习(review)三个视图。单例体质:开着一个再点星图标=聚焦它。
@@ -299,7 +325,8 @@ class StudyPanel extends Modal {
   // 视图注册表:未来加其它视图(搜索/统计页等)只需在这里追加一项 + 一个渲染分支,接口在此
   static TABS = [
     { id: "folder", name: "按目录" },
-    { id: "cats", name: "分类" },
+    { id: "cats", name: "按分类" },
+    { id: "types", name: "按题型" },
   ];
   async onOpen() {
     if (this.modalEl) this.modalEl.addClass("bqb-study-modal");
@@ -608,6 +635,7 @@ class StudyPanel extends Modal {
     }
     if (this.tab === "folder") this.renderFolder(root, keys);
     else if (this.tab === "cats") this.renderCats(root, keys);
+    else if (this.tab === "types") this.renderTypes(root, keys);
   }
 
   // 共享条目行:星(点亮=已收藏,灰=未收藏,点击切换) + 题干缩略 + id/状态/时间/分类芯片 + 标签钮 + 点行跳转
@@ -775,6 +803,28 @@ class StudyPanel extends Modal {
     ordered.push([null, groups.get(null) || []]); // 未分类恒显示
     for (const [c, rows] of ordered) {
       this.grpBox(root, c === null ? t("未分类") : c, rows, c);
+    }
+  }
+
+  // 按题型分组:每条自定义规则一组(空组也显示),没命中任何规则的按正确数归单选/多选。
+  // 判定互斥:规则按设置里的顺序首个命中即定型。失效题(索引里没有)不出现在本页。
+  renderTypes(root, keys) {
+    const compiled = compileTypeRules(this.plugin.settings.qtypes);
+    const groups = new Map();
+    const order = [];
+    const put = (name) => {
+      if (!groups.has(name)) { groups.set(name, []); order.push(name); }
+      return groups.get(name);
+    };
+    for (const r of compiled) put(r.name); // 自定义组空也显示(建了规则就能看到它收了哪些题)
+    put("单选"); put("多选"); // 内置兜底组恒显示
+    for (const key of keys) {
+      const ref = lookupId(key);
+      if (!ref) continue;
+      put(quizTypeOf(ref.options, compiled)).push(key);
+    }
+    for (const name of order) {
+      this.grpBox(root, t(name), groups.get(name) || [], null);
     }
   }
 
@@ -1044,11 +1094,16 @@ export default class QuizBlockPlugin extends Plugin {
     this.settings.catAssign = assign;
     // 补齐自建分类清单(默认空,用户在「分类」页新建)
     this.settings.favCats = Array.isArray(this.settings.favCats) ? this.settings.favCats : [];
+    // 题型规则兜底:仅保留 {name, code} 形态(损坏条目或旧实验格式直接丢弃)
+    this.settings.qtypes = (Array.isArray(this.settings.qtypes) ? this.settings.qtypes : [])
+      .filter((r) => r && r.name && typeof r.code === "string");
     // 复习排期表与每日热力表(stored 持久化;键为题目 id / YYYY-MM-DD)。旧数据没有 → 空对象
     if (!this.settings.study || typeof this.settings.study !== "object" || Array.isArray(this.settings.study)) this.settings.study = {};
     if (!this.settings.activity || typeof this.settings.activity !== "object" || Array.isArray(this.settings.activity)) this.settings.activity = {};
     this.applyButtonVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
+    // 设置页改完可回调:刷新学习面板(题库题型分组等即时生效)
+    this.refreshPanel = () => refreshFavViews();
     setLogHook((...a) => this.debugLog(...a));
     // 处理器先注册(块立即可渲;绑定 miss 的也登记,live 补渲兜底)
     registerQuizProcessor(this);

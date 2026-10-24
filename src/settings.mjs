@@ -5,8 +5,7 @@
 import { PluginSettingTab, Setting } from "obsidian";
 import { t } from "./i18n.mjs";
 
-export const DEFAULT_SETTINGS = {
-	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
+export const DEFAULT_SETTINGS = {	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
 	defaultMode: "non-immediate", // 主打模式:先选后查(单选多选)
 	defaultShuffle: true, // 打乱选项
 	defaultNumbering: "abc", // 默认选项编号 A B C
@@ -21,6 +20,24 @@ export const DEFAULT_SETTINGS = {
 	favorites: {}, // 收藏:题目 id → { addedAt 收藏时间, reviews 复习记录(接口预留) }(bind/copy 镜像与源题共享同一收藏)
 	favCats: [], // 自建分类名单(收藏夹「分类」页管理)
 	catAssign: {}, // 分类归属:题目 id → [分类名](独立于收藏,未收藏的题也能归类)
+	qtypes: [ // 自定义题型:每条 { name, code },code 为函数体源码,收到选项数组 o,返回真值即命中;按序首个命中即定型(都不中→按正确数归单选/多选)
+		{
+			name: "判断",
+			code: `// 两选项、唯一正确、短文本(中文≤2字 或 拉丁≤7字符)
+return o.length === 2
+  && o.filter(x => x.state === "c").length === 1
+  && o.every(x => {
+    const s = String(x.text || "").trim();
+    const wide = [...s].some(ch => ch.codePointAt(0) > 0x2e7f); // 中文等全角字符
+    return [...s].length <= (wide ? 2 : 7);
+  });`,
+		},
+		{
+			name: "大多选",
+			code: `// 不少于五个选项,且不是单选
+return o.length >= 5 && o.filter(x => x.state === "c").length !== 1;`,
+		},
+	],
 	study: {}, // 复习排期:题目 id → { reviews: [{ t 复习时间戳, ok 答对? }] }(全库题都有,独立于收藏)
 	activity: {}, // 每日复习数:"YYYY-MM-DD" → n(主页热力图数据源)
 	favBtn: { size: 24, editDX: 0, readDX: -3, readDY: -9 }, // 收藏按钮微调:尺寸px/编辑横向/阅读横向/阅读纵向
@@ -29,6 +46,27 @@ export const DEFAULT_SETTINGS = {
 	defaultBindStem: true, // bind 是否保留题干(user 偏好保留)
 	debug: false, // 调试日志
 };
+
+// 题型脚本文本 ⇄ 规则数组:「## 名称」独占一行开一条新题型,其下到下一个「## 」为该题型的函数体。
+// name 之前的游离内容忽略;函数体两侧空行 trim 掉。
+export function parseTypeScripts(text) {
+	const out = [];
+	let cur = null;
+	for (const line of String(text || "").split("\n")) {
+		const m = line.match(/^##\s+(.+?)\s*$/);
+		if (m) {
+			cur = { name: m[1], code: "" };
+			out.push(cur);
+			continue;
+		}
+		if (cur) cur.code += line + "\n";
+	}
+	return out.filter((r) => r.name && r.code.trim());
+}
+
+export function formatTypeScripts(list) {
+	return (list || []).map((r) => `## ${r.name}\n${String(r.code || "").trim()}`).join("\n\n");
+}
 
 export class QuizBoxSettingTab extends PluginSettingTab {
 	constructor(app, plugin) {
@@ -220,6 +258,22 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		/* -------- 题型脚本(折叠) -------- */
+		const qtBody = fold(t("题型脚本"));
+		new Setting(qtBody)
+			.setName(t("题型脚本文本"))
+			.setDesc(t("每段以「## 题型名」单独一行开头,下面是返回 true/false 的 JavaScript。运行时收到选项数组 o(x.text 文本、x.state \"c\"=正确、x.optIdx 序号),返回真值即判定为该题型。按顺序第一个命中生效,都不命中则归入单选/多选。此代码在您的笔记库中以本插件身份运行,仅写您自己可运行的规则。"))
+			.addTextArea((area) =>
+				area
+					.setValue(formatTypeScripts(this.plugin.settings.qtypes))
+					.onChange(async (value) => {
+						this.plugin.settings.qtypes = parseTypeScripts(value);
+						await this.plugin.saveSettings();
+						this.plugin.refreshPanel?.(); // 开着的题库页立即按新规则重新分组
+					})
+			)
+			.setClass("bqb-qtypes-editor");
 
 		/* -------- 按钮外观(进阶,折叠) -------- */
 		const btnBody = fold(t("按钮外观(测试)"));
