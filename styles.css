@@ -406,19 +406,65 @@
     padding-left: 12px;
 }
 
-/* 题型脚本编辑器:全宽、等宽字体、可纵向拉伸的大文本框 */
-.bqb-qtypes-editor .setting-item-control {
-    width: 100%;
+/* 题型脚本编辑器:布局配方与 latex-suite snippets 编辑器一致——
+   设置项 display:inline-block(脱离 flex 左右结构),提示语在上,代码框另起一行满宽;
+   cm-editor 显式 text-align:left,防主题/继承造成的内容右对齐 */
+.setting-item.bqb-qtypes-editor {
+    display: inline-block;
 }
 
-.bqb-qtypes-editor textarea {
+.bqb-qtypes-editor .setting-item-info {
+    margin-bottom: 0.75rem;
+}
+
+.bqb-qtypes-editor .setting-item-control {
     width: 100%;
-    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 6px;
+}
+
+/* CodeMirror 编辑器(latex-suite 同款):盒子样式照抄它的 snippets-editor-wrapper;
+   配色由 cmTheme/cmHighlight 在 JS 里走主题变量 */
+.bqb-qtypes-cmhost {
+    width: 100%;
+    margin-bottom: 4px;
+}
+
+.bqb-qtypes-cmhost .cm-editor {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    height: 20em;
     font-family: var(--font-monospace);
     font-size: 0.85em;
+    text-align: left;
+    outline: none !important;
+}
+
+.bqb-qtypes-cmhost .cm-editor.cm-focused {
+    outline: none;
+}
+
+.bqb-qtypes-cmhost .cm-scroller {
+    overflow: auto;
     line-height: 1.45;
-    resize: vertical;
-    tab-size: 2;
+}
+
+.bqb-qtypes-cmhost .cm-content {
+    padding: 8px 0;
+}
+
+/* 语法错误提示:改错时保存被拦下,错误显示在代码框下方;空内容不占高度 */
+.bqb-qtypes-error {
+    color: var(--text-error);
+    font-size: 0.85em;
+    white-space: pre-wrap;
+}
+
+.bqb-qtypes-error:empty {
+    display: none;
 }
 
 /* ===== 收藏夹视图(测试用,侧栏唤出)===== */

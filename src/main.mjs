@@ -269,6 +269,8 @@ export function reviewDue(recs) {
 }
 
 /* ============ 题型(用户脚本判定) ============ */
+// 编译结果缓存(typeShuffleOf 复用;qtypes 数组引用每次设置保存都会整体重建)
+const qtRulesCache = { cacheSrc: null, rules: [] };
 // 编译用户脚本:每条 {name, code} → {name, fn}。code 是函数体源码,收到选项数组 o
 // (每项 {optIdx, state("c"=正确), text}),返回真值即命中。语法错误的条目丢弃,不崩。
 export function compileTypeRules(rules) {
@@ -292,6 +294,18 @@ export function quizTypeOf(opts, compiled) {
   }
   const correct = (opts || []).filter((o) => o.state === "c").length;
   return correct >= 2 ? "多选" : "单选";
+}
+
+// 该题命中的题型若声明了 shuffle(true/false)则返回它,否则返回 null(调用方回落设置默认)。
+// 编译结果缓存复用,避免每个块重复 new Function。
+export function typeShuffleOf(opts, qtypes) {
+  if (qtRulesCache.cacheSrc !== qtypes) {
+    qtRulesCache.cacheSrc = qtypes;
+    qtRulesCache.rules = compileTypeRules(qtypes);
+  }
+  const name = quizTypeOf(opts, qtRulesCache.rules);
+  const rule = name != null ? (qtypes || []).find((r) => r && r.name === name) : null;
+  return rule && rule.shuffle != null ? rule.shuffle : null;
 }
 
 /* ============ 收藏夹 / 复习专用独立窗口 ============ */
@@ -883,7 +897,11 @@ function registerQuizProcessor(plugin) {
 
     // 应用设置缺省:块属性显式优先;未设置的按设置填充。就地写回供后续统一读。
     if (data.attrs.mode == null) data.attrs.mode = plugin.settings.defaultMode || "immediate";
-    if (data.attrs.shuffle == null) data.attrs.shuffle = plugin.settings.defaultShuffle !== false;
+    if (data.attrs.shuffle == null) {
+      // 题型级别声明(如判断题 shuffle:false)优先级高于设置默认,但低于块属性显式标注
+      const typeSh = typeShuffleOf(data.options, plugin.settings.qtypes);
+      data.attrs.shuffle = typeSh != null ? typeSh : plugin.settings.defaultShuffle !== false;
+    }
     if (data.attrs.number == null) data.attrs.number = plugin.settings.defaultNumbering || "none";
     if (data.attrs.submit == null) data.attrs.submit = plugin.settings.submitEnabled !== false;
     if (data.attrs.reset == null) data.attrs.reset = plugin.settings.resetMode || "auto";

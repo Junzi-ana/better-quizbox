@@ -3,7 +3,14 @@
  */
 
 import { PluginSettingTab, Setting } from "obsidian";
+import { EditorView, keymap, lineNumbers, drawSelection, highlightSpecialChars } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
+import { javascript } from "@codemirror/lang-javascript";
+import { indentOnInput, indentUnit, bracketMatching, syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { tags as hlTags } from "@lezer/highlight";
 import { t } from "./i18n.mjs";
+import { normalizeBoolToken } from "./parse.mjs";
 
 export const DEFAULT_SETTINGS = {	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
 	defaultMode: "non-immediate", // 主打模式:先选后查(单选多选)
@@ -20,9 +27,10 @@ export const DEFAULT_SETTINGS = {	// 出厂预设 = 作者(Junzi-ana)日常使�
 	favorites: {}, // 收藏:题目 id → { addedAt 收藏时间, reviews 复习记录(接口预留) }(bind/copy 镜像与源题共享同一收藏)
 	favCats: [], // 自建分类名单(收藏夹「分类」页管理)
 	catAssign: {}, // 分类归属:题目 id → [分类名](独立于收藏,未收藏的题也能归类)
-	qtypes: [ // 自定义题型:每条 { name, code },code 为函数体源码,收到选项数组 o,返回真值即命中;按序首个命中即定型(都不中→按正确数归单选/多选)
+	qtypes: [ // 自定义题型:每条 { name, code, shuffle? },code 为函数体源码,收到选项数组 o,返回真值即命中;按序首个命中即定型(都不中→按正确数归单选/多选);shuffle 声明该题型默认是否打乱(true/false,省略=跟随设置默认)
 		{
 			name: "判断",
+			shuffle: false, // 判断题只有对错,固定顺序(对错位置不漂移);块内仍可显式覆盖
 			code: `// 两选项、唯一正确、短文本(中文≤2字 或 拉丁≤7字符)
 return o.length === 2
   && o.filter(x => x.state === "c").length === 1
@@ -48,7 +56,7 @@ return o.length >= 5 && o.filter(x => x.state === "c").length !== 1;`,
 };
 
 // 题型脚本文本 ⇄ 规则数组:「## 名称」独占一行开一条新题型,其下到下一个「## 」为该题型的函数体。
-// name 之前的游离内容忽略;函数体两侧空行 trim 掉。
+// name 之前的游离内容忽略;函数体开始之前允许一行「shuffle: true/false」声明该题型默认是否打乱选项。
 export function parseTypeScripts(text) {
 	const out = [];
 	let cur = null;
@@ -59,14 +67,71 @@ export function parseTypeScripts(text) {
 			out.push(cur);
 			continue;
 		}
-		if (cur) cur.code += line + "\n";
+		if (!cur) continue;
+		const sh = cur.code.trim() === "" && line.match(/^\s*shuffle\s*:\s*(\S+)\s*$/i); // 指令行只认函数体开始之前
+		if (sh) {
+			cur.shuffle = normalizeBoolToken(sh[1]); // 不认识的词按"未声明"处理
+			continue;
+		}
+		cur.code += line + "\n";
 	}
 	return out.filter((r) => r.name && r.code.trim());
 }
 
 export function formatTypeScripts(list) {
-	return (list || []).map((r) => `## ${r.name}\n${String(r.code || "").trim()}`).join("\n\n");
+	return (list || [])
+		.map((r) => `## ${r.name}${r.shuffle == null ? "" : `\nshuffle: ${r.shuffle ? "true" : "false"}`}\n${String(r.code || "").trim()}`)
+		.join("\n\n");
 }
+
+/* -------- CodeMirror 主题与语法高亮(配色抄 latex-suite 的 obsidian 主题:全部走主题变量) -------- */
+const cmConfig = {
+	background: "var(--background-primary)",
+	foreground: "var(--text-normal)",
+	selection: "var(--text-selection)",
+	cursor: "var(--text-normal)",
+	activeLine: "var(--background-primary)",
+	matchingBracket: "var(--background-modifier-accent)",
+	keyword: "#d73a49",
+	variable: "var(--text-normal)",
+	function: "var(--text-accent-hover)",
+	string: "var(--text-accent)",
+	constant: "var(--text-accent-hover)",
+	type: "var(--text-accent-hover)",
+	class: "#6f42c1",
+	number: "var(--text-accent-hover)",
+	comment: "var(--text-faint)",
+	invalid: "var(--text-error)",
+	regexp: "var(--text-accent)",
+};
+
+const cmTheme = EditorView.theme({
+	"&": { color: cmConfig.foreground, backgroundColor: cmConfig.background },
+	".cm-content": { caretColor: cmConfig.cursor },
+	"&.cm-focused .cm-cursor": { borderLeftColor: cmConfig.cursor },
+	"&.cm-focused .cm-selectionBackground, .cm-selectionBackground, & ::selection": { backgroundColor: cmConfig.selection },
+	".cm-matchingBracket, .cm-nonmatchingBracket": { backgroundColor: cmConfig.matchingBracket, outline: "none" },
+	".cm-gutters": { backgroundColor: cmConfig.background, color: cmConfig.comment, borderRight: "1px solid var(--background-modifier-border)" },
+	".cm-lineNumbers, .cm-gutterElement": { color: "inherit" },
+}, { dark: false });
+
+const cmHighlight = HighlightStyle.define([
+	{ tag: hlTags.keyword, color: cmConfig.keyword },
+	{ tag: [hlTags.name, hlTags.deleted, hlTags.character, hlTags.macroName], color: cmConfig.variable },
+	{ tag: [hlTags.propertyName], color: cmConfig.function },
+	{ tag: [hlTags.processingInstruction, hlTags.string, hlTags.inserted, hlTags.special(hlTags.string)], color: cmConfig.string },
+	{ tag: [hlTags.function(hlTags.variableName), hlTags.labelName], color: cmConfig.function },
+	{ tag: [hlTags.color, hlTags.constant(hlTags.name), hlTags.standard(hlTags.name)], color: cmConfig.constant },
+	{ tag: [hlTags.definition(hlTags.name), hlTags.separator], color: cmConfig.variable },
+	{ tag: [hlTags.className], color: cmConfig.class },
+	{ tag: [hlTags.number, hlTags.changed, hlTags.annotation, hlTags.modifier, hlTags.self, hlTags.namespace], color: cmConfig.number },
+	{ tag: [hlTags.typeName], color: cmConfig.type },
+	{ tag: [hlTags.operator, hlTags.operatorKeyword], color: cmConfig.keyword },
+	{ tag: [hlTags.url, hlTags.escape, hlTags.regexp, hlTags.link], color: cmConfig.regexp },
+	{ tag: [hlTags.meta, hlTags.comment], color: cmConfig.comment },
+	{ tag: [hlTags.atom, hlTags.bool, hlTags.special(hlTags.variableName)], color: cmConfig.variable },
+	{ tag: hlTags.invalid, color: cmConfig.invalid },
+]);
 
 export class QuizBoxSettingTab extends PluginSettingTab {
 	constructor(app, plugin) {
@@ -76,6 +141,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 
 	display() {
 		const { containerEl } = this;
+		if (this.qtView) { this.qtView.destroy(); this.qtView = null; } // 设置页重渲染前清掉旧 CodeMirror 实例
 		containerEl.empty();
 
 		// 折叠分组:标题行点击开合;open = 默认展开(进阶类样式默认收起)
@@ -261,19 +327,38 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 
 		/* -------- 题型脚本(折叠) -------- */
 		const qtBody = fold(t("题型脚本"));
-		new Setting(qtBody)
+		const qtSetting = new Setting(qtBody)
 			.setName(t("题型脚本文本"))
-			.setDesc(t("每段以「## 题型名」单独一行开头,下面是返回 true/false 的 JavaScript。运行时收到选项数组 o(x.text 文本、x.state \"c\"=正确、x.optIdx 序号),返回真值即判定为该题型。按顺序第一个命中生效,都不命中则归入单选/多选。此代码在您的笔记库中以本插件身份运行,仅写您自己可运行的规则。"))
-			.addTextArea((area) =>
-				area
-					.setValue(formatTypeScripts(this.plugin.settings.qtypes))
-					.onChange(async (value) => {
-						this.plugin.settings.qtypes = parseTypeScripts(value);
-						await this.plugin.saveSettings();
-						this.plugin.refreshPanel?.(); // 开着的题库页立即按新规则重新分组
-					})
-			)
+			.setDesc(t("每段以「## 题型名」单独一行开头;其下可写一行 shuffle: true/false 声明该题型默认是否打乱选项(块内标注 > 此声明 > 设置默认);再下面是返回 true/false 的 JavaScript,收到选项数组 o(x.text 文本、x.state \"c\"=正确、x.optIdx 序号),返回真值即判定为该题型,按顺序第一个命中生效,都不命中则归入单选/多选。此代码在您的笔记库中以本插件身份运行,仅写您自己可运行的规则。"))
 			.setClass("bqb-qtypes-editor");
+
+		// CodeMirror 编辑器(latex-suite 同款方案):js 语法高亮/行号/括号匹配/撤销历史
+		const cmHost = qtSetting.controlEl.createDiv({ cls: "bqb-qtypes-cmhost" });
+		const qtErr = qtSetting.controlEl.createDiv({ cls: "bqb-qtypes-error" }); // 错误行在编辑器下方
+		this.qtView = new EditorView({
+			parent: cmHost,
+			state: EditorState.create({
+				doc: formatTypeScripts(this.plugin.settings.qtypes),
+				extensions: [
+					lineNumbers(),
+					highlightSpecialChars(),
+					history(),
+					javascript(),
+					drawSelection(),
+					EditorState.allowMultipleSelections.of(true),
+					indentOnInput(),
+					indentUnit.of("  "),
+					cmTheme,
+					syntaxHighlighting(cmHighlight, { fallback: true }),
+					EditorView.lineWrapping,
+					bracketMatching(),
+					keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+					EditorView.updateListener.of((v) => {
+						if (v.docChanged) this.qtApply(v.state.doc.toString(), qtErr);
+					}),
+				],
+			}),
+		});
 
 		/* -------- 按钮外观(进阶,折叠) -------- */
 		const btnBody = fold(t("按钮外观(测试)"));
@@ -420,5 +505,27 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+	}
+
+	// 题型脚本变更:逐条试编译(与运行时 compileTypeRules 同款 new Function)。
+	// 语法错误 → 不保存(settings.qtypes 保持旧值),错误显示在编辑器下方;全部通过才保存并刷新题库页。
+	async qtApply(text, qtErr) {
+		const parsed = parseTypeScripts(text);
+		for (const r of parsed) {
+			try {
+				new Function("o", `"use strict";\n${r.code}`);
+			} catch (e) {
+				qtErr.setText(`${t("语法错误")}: ## ${r.name} — ${e.message}`);
+				return;
+			}
+		}
+		qtErr.setText("");
+		this.plugin.settings.qtypes = parsed;
+		await this.plugin.saveSettings();
+		this.plugin.refreshPanel?.(); // 开着的题库页立即按新规则重新分组
+	}
+
+	hide() {
+		if (this.qtView) { this.qtView.destroy(); this.qtView = null; } // 关闭设置页时释放 CodeMirror
 	}
 }
