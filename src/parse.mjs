@@ -153,9 +153,8 @@ export function parseQuiz(source) {
         const det = trimBlankEdges(detailLines).join("\n");
         if (det.trim() !== "") details = det;
       } else {
-        // 无 [h]:保持旧规则,整段尾部视为解析/说明
-        const det = trimBlankEdges(seg).join("\n");
-        if (det.trim() !== "") details = det;
+        // 无 [h]:末选项后的换行文本属于末选项本身(提示必须显式 [h] 才存在)
+        textLines.push(...seg);
       }
     } else {
       // 中间段(到下一个选项标记为止):非选项行均为上一选项的续行

@@ -16,6 +16,11 @@ export function nextState(state) {
   }
 }
 
+// 由 DOM 上的 optIdx 取回选项对象(渲染层与交互层共用)
+export function optOf(options, optIdx) {
+  return options.find((o) => o.optIdx === Number(optIdx));
+}
+
 export function buildBlock(container, data) {
   container.empty();
   const cls = ["quiz-block", "quiz-block--" + data.attrs.mode];
@@ -34,31 +39,40 @@ export function buildBlock(container, data) {
     optEl.createSpan({ cls: "quiz-option__label" });
     optEl.createDiv({ cls: "quiz-option__body" });
   }
-  if (data.details !== undefined) {
-    block.createDiv({ cls: "quiz-details" });
-  }
+  // [h] 提示文本(边距由设置经 CSS 变量控制)
+  if (data.details !== undefined) block.createDiv({ cls: "quiz-hint" }).createDiv({ cls: "quiz-details" });
   return block;
 }
 
-export function applyVisuals(block, data, numberMode, ctrl) {
+// 实测"选项正文一行"的高度,写进块上的 --bqb-line-px:
+// 标志盒(ABC/对错/「提示」)据此对齐第一行的垂直中心。不猜主题行高变量——
+// 笔记预览与复习弹窗的行高来源不同(主题可能只给 .markdown-preview-view 设行高),实测才两边一致。
+function markLineHeight(block) {
+  const body = block.querySelector(".quiz-option__body");
+  if (!body || typeof window === "undefined" || !window.getComputedStyle) return;
+  const probe = body.firstElementChild || body;
+  const cs = window.getComputedStyle(probe);
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+  if (lh > 0) block.style.setProperty("--bqb-line-px", lh + "px");
+}
+
+export function applyVisuals(block, data, ctrl) {
   const mode = data.attrs.mode;
+  const numberMode = data.attrs.number;
   const hasWrong = data.options.some((o) => o.state === "w");
   const hasAnswer = data.options.some((o) => o.state === "w" || o.state === "r");
+  markLineHeight(block);
   const rows = block.querySelectorAll(".quiz-option");
   const ansLetters = [];  // 批改横幅:正确答案字母(按显示顺序,c/r 都算)
   const pickLetters = []; // 批改横幅:你的选择字母(w/r 都算,供"你的选择"文案)
   rows.forEach((optEl, idx) => {
-    const oi = parseInt(optEl.dataset.optIdx, 10);
-    const o = data.options.find((x) => x.optIdx === oi);
+    const o = optOf(data.options, optEl.dataset.optIdx);
     const cls = ["quiz-option"];
     const correct = o && (o.state === "c" || o.state === "r");
-    let letterTxt = "";
-    if (numberMode === "abc") letterTxt = idx < 26 ? String.fromCharCode(65 + idx) : String(idx + 1);
-    else if (numberMode === "123") letterTxt = String(idx + 1);
-    // 横幅字母:开了 abc/123 用同款标签;无编号时回落 A/B/C(按显示位置)
-    const bannerLetter = numberMode === "123" ? String(idx + 1)
-      : numberMode === "abc" ? letterTxt
-      : idx < 26 ? String.fromCharCode(65 + idx) : String(idx + 1);
+    // 无编号时的回落字母(批改横幅按显示位置用 A/B/C)
+    const fallback = idx < 26 ? String.fromCharCode(65 + idx) : String(idx + 1);
+    const letterTxt = numberMode === "123" ? String(idx + 1) : numberMode === "abc" ? fallback : "";
+    const bannerLetter = letterTxt || fallback;
     if (mode === "static") {
       if (o && o.state === "c") cls.push("quiz-option--correct");
     } else if (mode === "non-immediate" && data.submitted) {
@@ -76,7 +90,7 @@ export function applyVisuals(block, data, numberMode, ctrl) {
     }
     optEl.className = cls.join(" ");
     const label = optEl.querySelector(".quiz-option__label");
-    if (label) label.setText(numberMode === "abc" || numberMode === "123" ? letterTxt : "");
+    if (label) label.setText(letterTxt);
     if (data.submitted && mode === "non-immediate") {
       if (correct) ansLetters.push(bannerLetter);
       if (o && (o.state === "w" || o.state === "r")) pickLetters.push(bannerLetter);
@@ -84,7 +98,9 @@ export function applyVisuals(block, data, numberMode, ctrl) {
   });
   const details = block.querySelector(".quiz-details");
   if (details) {
-    const visible = mode === "static" || hasAnswer;
+    // [h] 提示默认点击后才显示(static 恒显示);hintReveal=always 时改为常驻
+    const always = data.hintReveal === "always";
+    const visible = always || mode === "static" || hasAnswer;
     details.toggleClass("quiz-details--visible", visible);
   }
   if (ctrl) setupActions(block, data, ctrl, ansLetters, pickLetters);
@@ -116,61 +132,52 @@ export function gradeSummary(data) {
 // 闭包持有 ctrl 且 data 为本次渲染的原地对象(作答/批改态就地改存,指针稳定)
 function setupActions(block, data, ctrl, ansLetters, pickLetters) {
   if (data.attrs.mode !== "non-immediate" || data.submit === false || !data.options.length) return;
-  // 操作区在 applyVisuals 末尾追加到块底部(选项+解析之后);本次渲染生命周期内只建一次
+  // 本次渲染生命周期内只建一次(元素引用挂在 foot.__ui,重绘时直接复用,不再反复 querySelector)
   let foot = block.querySelector(".quiz-actions");
-  if (!foot) foot = block.createDiv({ cls: "quiz-actions" });
-  if (!foot.querySelector(".quiz-verdict")) foot.createDiv({ cls: "quiz-verdict" });
-  if (!foot.querySelector(".quiz-action-btn--submit")) {
+  if (!foot) {
+    foot = block.createDiv({ cls: "quiz-actions" });
+    const verdict = foot.createDiv({ cls: "quiz-verdict" });
     const submitBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--submit", text: t("提交") });
-    submitBtn.addEventListener("click", () => submitQuiz(block, data, ctrl));
-  }
-  if (!foot.querySelector(".quiz-action-btn--reset")) {
     const resetBtn = foot.createDiv({ cls: "quiz-action-btn quiz-action-btn--reset", text: t("重置") });
+    submitBtn.addEventListener("click", () => submitQuiz(block, data, ctrl));
     resetBtn.addEventListener("click", () => {
       dropCard(ctrl.key); // 重置 = 刷新:清瞬态(顺序+作答+批改态),重渲染后全新重摇
       ctrl.rerender();
     });
+    foot.__ui = { verdict, submitBtn, resetBtn };
   }
-  const verdict = foot.querySelector(".quiz-verdict");
-  if (verdict) {
-    if (data.submitted) {
-      // 文案模板由设置提供:{ans}=正确答案字母,{pick}=你的选择字母(均按显示顺序)
-      const ok = gradeSummary(data).ok;
-      const tpl = ok ? (data.verdictOk || t("回答正确！"))
-                     : (data.verdictBad || t("回答错误！正确答案：{ans}，你的选择：{pick}"));
-      const txt = tpl
-        .replace(/\{ans\}/g, ansLetters.join(""))
-        .replace(/\{pick\}/g, pickLetters.join(""));
-      verdict.setText(txt);
-      verdict.toggleClass("quiz-verdict--ok", ok);
-      verdict.toggleClass("quiz-verdict--bad", !ok);
-      verdict.toggleClass("quiz-verdict--visible", true);
-    } else {
-      verdict.setText("");
-      verdict.toggleClass("quiz-verdict--visible", false);
-    }
+  const { verdict, submitBtn, resetBtn } = foot.__ui;
+  const hasSel = data.options.some((o) => o.state === "w" || o.state === "r");
+  if (data.submitted) {
+    // 文案模板由设置提供:{ans}=正确答案字母,{pick}=你的选择字母(均按显示顺序)
+    const ok = gradeSummary(data).ok;
+    const tpl = ok ? (data.verdictOk || t("回答正确！"))
+                   : (data.verdictBad || t("回答错误！正确答案：{ans}，你的选择：{pick}"));
+    verdict.setText(tpl
+      .replace(/\{ans\}/g, ansLetters.join(""))
+      .replace(/\{pick\}/g, pickLetters.join("")));
+    verdict.toggleClass("quiz-verdict--ok", ok);
+    verdict.toggleClass("quiz-verdict--bad", !ok);
   }
-  const submitBtn = foot.querySelector(".quiz-action-btn--submit");
-  if (submitBtn) {
-    const hasSel = data.options.some((o) => o.state === "w" || o.state === "r");
-    submitBtn.toggleClass("quiz-action-btn--hidden", data.submitted || !hasSel);
-  }
-  const resetBtn = foot.querySelector(".quiz-action-btn--reset");
-  if (resetBtn) {
-    // 重置按钮:手动重置模式批改后必显;自动重置模式下受设置控制(可不显示,靠切页自动重置)
-    const showReset = data.submitted && (data.reset === "manual" || data.showReset !== false);
-    resetBtn.toggleClass("quiz-action-btn--hidden", !showReset);
-  }
+  verdict.toggleClass("quiz-verdict--visible", data.submitted);
+  submitBtn.toggleClass("quiz-action-btn--hidden", data.submitted || !hasSel);
+  // 重置按钮:手动重置模式批改后必显;自动重置模式下受设置控制(可不显示,靠切页自动重置)
+  resetBtn.toggleClass("quiz-action-btn--hidden", !(data.submitted && (data.reset === "manual" || data.showReset !== false)));
+}
+
+// 选项状态快照(optIdx → state),供卡片瞬态存储
+function stateMap(options) {
+  const m = new Map();
+  for (const o of options) m.set(o.optIdx, o.state);
+  return m;
 }
 
 // 提交:锁动作 + 存批改态 + 批改视觉(w=错选红 / c=漏选揭示 / r=对选绿)
 export function submitQuiz(block, data, ctrl) {
   if (data.submitted) return;
   data.submitted = true;
-  const saved = new Map();
-  for (const u of data.options) saved.set(u.optIdx, u.state);
-  saveCard(ctrl.key, ctrl.container, ctrl.order, saved, ctrl.optSig, true);
-  applyVisuals(block, data, data.attrs.number, ctrl);
+  saveCard(ctrl.key, ctrl.container, ctrl.order, stateMap(data.options), ctrl.optSig, true);
+  applyVisuals(block, data, ctrl);
 }
 
 /* ------------------------------- 交互:瞬态作答 ------------------------------- */
@@ -188,8 +195,6 @@ export function dynamicClick(block, data, opt, ctrl, multi) {
     }
   }
   opt.state = p;
-  const saved = new Map();
-  for (const u of data.options) saved.set(u.optIdx, u.state);
-  saveCard(ctrl.key, ctrl.container, ctrl.order, saved, ctrl.optSig);
-  applyVisuals(block, data, data.attrs.number, ctrl);
+  saveCard(ctrl.key, ctrl.container, ctrl.order, stateMap(data.options), ctrl.optSig);
+  applyVisuals(block, data, ctrl);
 }

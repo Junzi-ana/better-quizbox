@@ -12,6 +12,10 @@ import { tags as hlTags } from "@lezer/highlight";
 import { t } from "./i18n.mjs";
 import { normalizeBoolToken } from "./parse.mjs";
 
+// 外观微调控件开关:false = 设置页不显示(按钮外观/收藏按钮/提示边距);
+// 相关参数值已固化进 DEFAULT_SETTINGS,改回 true 即可原样重现这些控件。
+const SHOW_CSS_TWEAKS = false;
+
 export const DEFAULT_SETTINGS = {	// 出厂预设 = 作者(Junzi-ana)日常使用配置,他人安装即得此套默认(2026-10 固化)
 	defaultMode: "non-immediate", // 主打模式:先选后查(单选多选)
 	defaultShuffle: true, // 打乱选项
@@ -21,9 +25,14 @@ export const DEFAULT_SETTINGS = {	// 出厂预设 = 作者(Junzi-ana)日常使�
 	showReset: true, // 批改后显示重置按钮
 	verdictOk: "回答正确！正确答案：{ans}。", // 判对文案(出厂中文;非中文界面显示时自动切英文,见 main.verdictTexts)
 	verdictBad: "回答错误！正确答案：{ans}，你的选择：{pick}。", // 判错文案({ans}/{pick} 占位)
+	hintReveal: "click", // [h] 提示显示时机:click(默认,批改后显示,与历史行为一致) / always(常驻显示)
+	hintMarginLeft: 2, // [h] 提示文本左边距(px;控件已隐藏,值为出厂预设)
+	hintMarginRight: 0, // [h] 提示文本右边距(px;同上)
+	hintMarginTop: 12, // [h] 提示文本与末选项之间的间距(px;同上)
+	reviewScale: 80, // 复习页字号(相对笔记正文的百分比;卡片内一切尺寸按 em 等比跟随)
 	renumberExclude: "", // 重新编号屏蔽目录(每行一个路径)
-	btnSubmit: { mix: 65, hover: 0.04, fg: "white", bold: false }, // 提交按钮外观(混色%/悬停±/字色/字重)
-	btnReset: { mix: 25, hover: -0.04, fg: "black", bold: false }, // 重置按钮外观
+	btnSubmit: { mix: 80, hover: 0.08, fg: "white", bold: false }, // 提交按钮外观(混色%/悬停±/字色/字重;控件已隐藏,值为出厂预设)
+	btnReset: { mix: 15, hover: -0.04, fg: "black", bold: false }, // 重置按钮外观(同上)
 	favorites: {}, // 收藏:题目 id → { addedAt 收藏时间, reviews 复习记录(接口预留) }(bind/copy 镜像与源题共享同一收藏)
 	favCats: [], // 自建分类名单(收藏夹「分类」页管理)
 	catAssign: {}, // 分类归属:题目 id → [分类名](独立于收藏,未收藏的题也能归类)
@@ -166,8 +175,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			.setDesc(t("块内未写 mode 时生效"))
 			.addDropdown((drop) =>
 				drop
-					.addOption("immediate", t("即时判分(单选,快)"))
-					.addOption("non-immediate", t("先选后查(单选/多选)"))
+					.addOption("immediate", t("即时批改"))
+					.addOption("non-immediate", t("提交批改"))
 					.addOption("static", t("静态展示"))
 					.setValue(this.plugin.settings.defaultMode)
 					.onChange(async (value) => {
@@ -203,8 +212,20 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
-		/* ------------ 批改 ------------ */
-		new Setting(containerEl).setName(t("批改(先选后查)")).setHeading();
+		new Setting(containerEl)
+			.setName(t("提示常驻显示"))
+			.setDesc(t("开=[h] 提示做题时即显示;关(默认)=批改后才显示(static 块始终显示)"))
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.hintReveal === "always")
+					.onChange(async (value) => {
+						this.plugin.settings.hintReveal = value ? "always" : "click";
+						await this.plugin.saveSettings();
+					})
+			);
+
+		/* ------------ 提交批改 ------------ */
+		new Setting(containerEl).setName(t("提交批改")).setHeading();
 
 		new Setting(containerEl)
 			.setName(t("提交按钮"))
@@ -244,10 +265,8 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
-		/* -------- 批改文案(进阶,折叠) -------- */
-		const vfBody = fold(t("批改文案(测试)"));
-
-		new Setting(vfBody)
+		/* 批改文案(占位符 {ans}/{pick}) */
+		new Setting(containerEl)
 			.setName(t("判对文案"))
 			.setDesc(t("支持占位符 {ans}=正确答案 {pick}=你的选择"))
 			.addText((text) =>
@@ -259,7 +278,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(vfBody)
+		new Setting(containerEl)
 			.setName(t("判错文案"))
 			.setDesc(t("同上;空占位符会被剔除"))
 			.addText((text) =>
@@ -325,6 +344,50 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					})
 			);
 
+		/* ------------ 进阶 ------------ */
+		/* ------------ 其他 ------------ */
+		new Setting(containerEl).setName(t("其他")).setHeading();
+
+		// 复习页字号:卡片内全部尺寸按 em 排版,以正文百分比缩放即整体等比(题目/编号框/按钮/提示)
+		new Setting(containerEl)
+			.setName(t("复习页字号"))
+			.setDesc(t("百分比,相对笔记正文;复习窗口比笔记窄,整块内容按此等比缩放"))
+			.addSlider((slider) =>
+				slider
+					.setLimits(60, 120, 1)
+					.setValue(this.plugin.settings.reviewScale)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.reviewScale = value;
+						this.plugin.applyCssVars();
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName(t("绑定默认保留题干"))
+			.setDesc(t("bind 默认保留题干"))
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.defaultBindStem)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultBindStem = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName(t("调试日志"))
+			.setDesc(t("控制台(过滤 bqb)输出插件事件;排查用"))
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.debug)
+					.onChange(async (value) => {
+						this.plugin.settings.debug = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
 		/* -------- 题型脚本(折叠) -------- */
 		const qtBody = fold(t("题型脚本"));
 		const qtSetting = new Setting(qtBody)
@@ -360,8 +423,34 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 			}),
 		});
 
-		/* -------- 按钮外观(进阶,折叠) -------- */
-		const btnBody = fold(t("按钮外观(测试)"));
+		/* -------- 外观微调(暂时隐藏) --------
+		 * 按钮外观 / 收藏按钮 / 提示边距:值已固化进出厂预设(DEFAULT_SETTINGS)。
+		 * 需要再调时把文件顶部的 SHOW_CSS_TWEAKS 改回 true,控件即重现(块内缩进保持原样)。 */
+		if (SHOW_CSS_TWEAKS) {
+		// 提示文本边距:左右分别调 + 与末选项的间距;立即写 CSS 变量,无需重渲染
+		const lookBody = fold(t("提示边距"));
+		const hintSlider = (key, min, max, label, desc) => {
+			new Setting(lookBody)
+				.setName(label)
+				.setDesc(desc)
+				.addSlider((slider) =>
+					slider
+						.setLimits(min, max, 1)
+						.setValue(this.plugin.settings[key])
+						.setDynamicTooltip()
+						.onChange(async (value) => {
+							this.plugin.settings[key] = value;
+							this.plugin.applyCssVars();
+							await this.plugin.saveSettings();
+						})
+				);
+		};
+		hintSlider("hintMarginLeft", 0, 96, t("提示左边距"), t("px,提示文本左端的位置"));
+		hintSlider("hintMarginRight", 0, 96, t("提示右边距"), t("px,提示文本右端的位置"));
+		hintSlider("hintMarginTop", 0, 48, t("提示上边距"), t("px,提示文本到末选项框的距离"));
+
+		/* -------- 按钮外观(折叠) -------- */
+		const btnBody = fold(t("按钮外观"));
 
 		// 每个按钮 4 项:混色比例 / 悬停(负暗正亮) / 字色(自动|反自动|白|黑) / 字重
 		const btnRow = (key, label) => {
@@ -376,7 +465,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						.setDynamicTooltip()
 						.onChange(async (v) => {
 							cfg.mix = v;
-							this.plugin.applyButtonVars();
+							this.plugin.applyCssVars();
 							await this.plugin.saveSettings();
 						})
 				);
@@ -390,7 +479,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						.setDynamicTooltip()
 						.onChange(async (v) => {
 							cfg.hover = v;
-							this.plugin.applyButtonVars();
+							this.plugin.applyCssVars();
 							await this.plugin.saveSettings();
 						})
 				);
@@ -406,7 +495,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						.setValue(cfg.fg || "auto")
 						.onChange(async (v) => {
 							cfg.fg = v;
-							this.plugin.applyButtonVars();
+							this.plugin.applyCssVars();
 							await this.plugin.saveSettings();
 						})
 				);
@@ -420,7 +509,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						.setValue(cfg.bold ? "bold" : "normal")
 						.onChange(async (v) => {
 							cfg.bold = v === "bold";
-							this.plugin.applyButtonVars();
+							this.plugin.applyCssVars();
 							await this.plugin.saveSettings();
 						})
 				);
@@ -436,7 +525,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					const tmp = { ...this.plugin.settings.btnSubmit };
 					this.plugin.settings.btnSubmit = { ...this.plugin.settings.btnReset };
 					this.plugin.settings.btnReset = tmp;
-					this.plugin.applyButtonVars();
+					this.plugin.applyCssVars();
 					await this.plugin.saveSettings();
 					this.display(); // 重绘面板反映互换后的值
 				})
@@ -455,7 +544,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 					.setDynamicTooltip()
 					.onChange(async (v) => {
 						this.plugin.settings.favBtn.size = v;
-						this.plugin.applyButtonVars();
+						this.plugin.applyCssVars();
 						await this.plugin.saveSettings();
 					})
 			);
@@ -470,7 +559,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 						.onChange(async (v) => {
 							const n = parseFloat(v);
 							this.plugin.settings.favBtn[field] = isNaN(n) ? 0 : n;
-							this.plugin.applyButtonVars();
+							this.plugin.applyCssVars();
 							await this.plugin.saveSettings();
 						})
 				);
@@ -478,33 +567,7 @@ export class QuizBoxSettingTab extends PluginSettingTab {
 		favNudge("editDX", t("编辑视图 · 横向微调"), t("在动态读位基础上再偏移(px,可负)"));
 		favNudge("readDX", t("阅读视图 · 横向微调"), t("距右缘额外偏移(px,可负)"));
 		favNudge("readDY", t("阅读视图 · 纵向微调"), t("距顶额外偏移(px,可负)"));
-
-		/* ------------ 其他 ------------ */
-		new Setting(containerEl).setName(t("其他")).setHeading();
-
-		new Setting(containerEl)
-			.setName(t("绑定默认保留题干"))
-			.setDesc(t("bind 默认保留题干"))
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.defaultBindStem)
-					.onChange(async (value) => {
-						this.plugin.settings.defaultBindStem = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName(t("调试日志"))
-			.setDesc(t("控制台(过滤 bqb)输出插件事件;排查用"))
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.debug)
-					.onChange(async (value) => {
-						this.plugin.settings.debug = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		}
 	}
 
 	// 题型脚本变更:逐条试编译(与运行时 compileTypeRules 同款 new Function)。

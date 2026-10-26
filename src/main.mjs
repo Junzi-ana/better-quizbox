@@ -16,7 +16,8 @@
  *     [ ] 选项A
  *     [c] 选项B(正确项;源码遗留的 [w]/[r] 一律按未选处理)
  *     ... 选项支持多行(中间段非选项行并入上一选项)
- *     [h] 解析/说明(放在末选项之后；为可选,无 [h] 时末选项后的文本视为解析)
+ *     [h] 提示文本(可选;放在末选项之后,必须显式写 [h] 才会成为提示,
+ *        无 [h] 时末选项后的文本归末选项;显示时机见设置"提示常驻显示")
  *   `` ``` ``
  *
  * 可选块属性(整行 HTML 注释,放块内任意位置、每个属性一行、首个生效):
@@ -47,7 +48,7 @@ import {
   stableContainer,
   resetTransientState
 } from "./state.mjs";
-import { buildBlock, applyVisuals, dynamicClick, gradeSummary } from "./render.mjs";
+import { buildBlock, applyVisuals, dynamicClick, gradeSummary, optOf } from "./render.mjs";
 import { DEFAULT_SETTINGS, QuizBoxSettingTab } from "./settings.mjs";
 import { assignCounterIds, renumberFile, collectIdMap, rewriteRefsInText, fileIdOf, hashLenOf } from "./idassign.mjs";
 import {
@@ -310,8 +311,11 @@ export function typeShuffleOf(opts, qtypes) {
 
 /* ============ 收藏夹 / 复习专用独立窗口 ============ */
 // 像 Spaced Repetition 的闪卡复习窗口:一个 modal 弹窗(非侧栏、非标签页),内置
-// 主页(home)/题库(bank)/复习(review)三个视图。单例体质:开着一个再点星图标=聚焦它。
+// 主页(home)/题库(bank)/复习(review)/浏览(browse)四个视图。单例体质:开着一个再点星图标=聚焦它。
 let studyPanel = null;
+// "跳到原文"必须把面板关掉(模态会盖住笔记),关之前把所在的页/题存这里:
+// 下次打开面板(ribbon/命令)直接回到原位,等于"切后台再回来"。一次性,用掉即清。
+let pendingView = null;
 function openPanel(plugin) {
   if (studyPanel) {
     try { studyPanel.open(); } catch (e) {}
@@ -326,15 +330,27 @@ class StudyPanel extends Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
-    this.page = "home"; // home=主页 / bank=题库(原收藏夹列表) / review=复习
+    this.page = "home"; // home=主页 / bank=题库(原收藏夹列表) / review=复习 / browse=浏览
     this.tab = "folder"; // 题库页内标签(folder=按目录 cats=分类)
     this.showFavs = false; // 题库页「显示收藏」开关:关=全库题目,开=只列已收藏
+    this.mgmt = false; // 管理分类模式:开=行尾多选框+组头全选框+批量操作条
+    this.mgmtSel = new Set(); // 管理模式下选中的题 id(弹窗内临时状态,切换 tab/重渲保留)
+    this.closed = new Set(); // 折叠起来的组 id(重渲后原样复原,不会莫名全部展开)
+    this._lastPage = null; // 上一次渲染的页(home/bank/review),用于判断是否保留滚动位置
+    this._mgmtSyncs = []; // 本次渲染产出的组头全选框同步函数(勾选后原地刷新,不重渲)
     // 复习会话(临时状态,不落盘):本轮队列/游标/对错计数/rCommitted=已提交记账的题key(防重)
     this.rQueue = [];
     this.rIdx = 0;
     this.rOk = 0;
     this.rBad = 0;
     this.rCommitted = null;
+    // 浏览会话(从题库点题目进入):题组 = 题库页当前分组的题目序列,组与组首尾相接循环
+    this.bGroups = [];   // [[key, key, ...], ...] 按题库页显示顺序
+    this.bGi = 0;        // 当前题组下标
+    this.bQi = 0;        // 组内题目下标
+    this.bDone = new Map(); // key → { order, states }:本次浏览里已作答的题(回看时保持批改态)
+    this.bPrev = null;   // 进入浏览前的题库页快照(返回时原样复原:tab/筛选/折叠/滚动)
+    this.listGroups = []; // 题库页本次渲染产出的分组(key 数组),供浏览模式跨组前后翻页
   }
   // 视图注册表:未来加其它视图(搜索/统计页等)只需在这里追加一项 + 一个渲染分支,接口在此
   static TABS = [
@@ -344,8 +360,16 @@ class StudyPanel extends Modal {
   ];
   async onOpen() {
     if (this.modalEl) this.modalEl.addClass("bqb-study-modal");
+    const restored = this.restoreView(); // 上次因"跳到原文"关掉时记下的原位
     this.setTitle("Better Quiz Box");
     this.render();
+    if (restored && this._restoreScroll) {
+      // 滚动位置:渲染后立刻放一次,等一帧再放一次(卡片内容异步渲染会改高度)
+      const top = this._restoreScroll;
+      this._restoreScroll = 0;
+      this.contentEl.scrollTop = top;
+      requestAnimationFrame(() => { if (this.contentEl) this.contentEl.scrollTop = top; });
+    }
     // 不聚焦:Obsidian 打开弹窗会自动聚焦首个可聚焦元素,主题给焦点态换边框观感,
     // 导致"开始复习"和"题库"看起来不一致。本面板纯点击操作不需要焦点,打开后归还。
     requestAnimationFrame(() => {
@@ -354,19 +378,82 @@ class StudyPanel extends Modal {
   }
   async onClose() { if (studyPanel === this) studyPanel = null; }
 
+  // 关面板前存下"原位"(跳到原文时必须关面板):页/题/筛选/折叠/滚动全带上
+  snapshotView() {
+    const v = {
+      page: this.page,
+      tab: this.tab,
+      showFavs: this.showFavs,
+      mgmt: this.mgmt,
+      closed: new Set(this.closed),
+      scrollTop: this.contentEl ? this.contentEl.scrollTop : 0,
+    };
+    if (this.page === "browse") {
+      v.bGroups = this.bGroups.map((g) => [...g]);
+      v.bGi = this.bGi;
+      v.bQi = this.bQi;
+      v.bDone = new Map(this.bDone); // 已答过的题连批改态一起带回来
+    }
+    return v;
+  }
+
+  // 打开面板时消费一次原位快照;没有快照就照常从主页开始
+  restoreView() {
+    const v = pendingView;
+    pendingView = null;
+    if (!v) return false;
+    this.tab = v.tab || this.tab;
+    this.showFavs = !!v.showFavs;
+    this.mgmt = !!v.mgmt;
+    this.closed = new Set(v.closed || []);
+    this._restoreScroll = v.scrollTop || 0;
+    if (v.page === "browse" && v.bGroups && v.bGroups.length) {
+      this.bGroups = v.bGroups;
+      this.bGi = Math.min(Math.max(0, v.bGi || 0), v.bGroups.length - 1);
+      this.bQi = Math.max(0, Math.min(v.bQi || 0, this.bGroups[this.bGi].length - 1));
+      this.bDone = v.bDone || new Map();
+      // 浏览页的"<"要能回题库:把当时的题库页状态一并复原(含滚动)
+      this.bPrev = {
+        tab: this.tab,
+        showFavs: this.showFavs,
+        mgmt: this.mgmt,
+        closed: new Set(this.closed),
+        scrollTop: v.scrollTop || 0,
+      };
+      this.page = "browse";
+      return true;
+    }
+    this.page = v.page === "bank" ? "bank" : "home";
+    return v.page === "bank";
+  }
+
   render() {
     const root = this.contentEl;
+    // 题库页内部重渲(收藏/分类/折叠等操作)保留滚动位置;换页或复习页每题都从顶部开始
+    const keepScroll = this.page === "bank" && this._lastPage === "bank";
+    const scrolled = root.scrollTop;
+    this._lastPage = this.page;
     root.empty();
+    this._mgmtSyncs = [];
+    // 管理分类操作条挂弹窗层(不随内容滚动),每次重渲先清掉,切页/退出模式也不残留
+    this.modalEl.querySelectorAll(".bqb-mgmtbar").forEach((el) => el.remove());
     if (this.page === "home") this.renderHome(root);
     else if (this.page === "review") this.renderReview(root);
+    else if (this.page === "browse") this.renderBrowse(root);
     else this.renderList(root);
+    if (keepScroll) root.scrollTop = scrolled;
   }
   go(page) { this.page = page; this.render(); }
 
-  // 返回主页按钮(复习页/题库页共用,同一套路):左箭头,回主页同时清复习会话
-  backBtn(parent) {
-    const back = parent.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": t("返回主页") } });
+  // 返回按钮(复习/浏览/题库页共用):左箭头 + 返回主页,同时清复习会话。
+  // 浏览页传 onBack(回到题库并复原进入时的页面),其余页不传 → 回主页。
+  backBtn(parent, onBack) {
+    const back = parent.createEl("a", { cls: "bqb-study-back clickable-icon", attr: { "aria-label": t(onBack ? "返回题库" : "返回主页") } });
     setIcon(back, "left-arrow");
+    if (onBack) {
+      back.addEventListener("click", () => onBack());
+      return back;
+    }
     back.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
     return back;
   }
@@ -503,6 +590,9 @@ class StudyPanel extends Modal {
     this.rIdx = 0; this.rOk = 0; this.rBad = 0; this.rCommitted = null;
   }
   renderReview(root) {
+    // 复习页统一字号上下文:题头/卡片/下一题都挂在这里,按设置比例相对笔记正文缩小
+    // (卡片内部再全用 em → 编号框/按钮/提示标志自动等比)
+    root = root.createDiv({ cls: "bqb-rvpage" });
     if (!this.rQueue.length) this.startReview();
     if (!this.rQueue.length) { // 全库没有可复习的题
       root.createDiv({ cls: "bqb-study-empty" }).setText(t("全库还没有可复习的 quiz(id 索引为空)。"));
@@ -514,6 +604,14 @@ class StudyPanel extends Modal {
     const head = root.createDiv({ cls: "bqb-study-rvhead" });
     this.backBtn(head);
     head.createSpan({ cls: "bqb-study-rvprog" }).setText(t("第 {a} / {b} 题", { a: this.rIdx + 1, b: this.rQueue.length }));
+    // 题型与来源跟题号同一行:「第 1 / 10 题 · 单选 · 测度论 / 记忆卡 / 3.1 积分的基本性质」
+    // 题号与题型加粗,来源(全路径、去后缀)不加粗;不加"来源/题型"字样
+    const srcName = ref.file.replace(/\.[^.]+$/, "");
+    const qtype = quizTypeOf(ref.options, compileTypeRules(this.plugin.settings.qtypes));
+    head.createSpan({ cls: "bqb-study-rvmeta-dot", text: " · " });
+    head.createSpan({ cls: "bqb-study-rvmeta bqb-study-rvmeta--strong" }).setText(qtype);
+    head.createSpan({ cls: "bqb-study-rvmeta-dot", text: " · " });
+    head.createSpan({ cls: "bqb-study-rvmeta" }).setText(srcName);
     // 新/旧徽标:有无复习记录一目了然(没学过的=新卡,有记录的=复习)
     const isNew = !(this.plugin.settings.study?.[cur.key]?.reviews || []).length;
     head.createSpan({ cls: "bqb-study-rvbadge " + (isNew ? "bqb-rvbadge-new" : "bqb-rvbadge-old") })
@@ -522,6 +620,7 @@ class StudyPanel extends Modal {
     // —— 复用正牌 quiz 渲染/交互(non-immediate + 提交判分),与笔记里完全一致 ——
     // display 与 runRender 同等形态;选项深拷贝,state 保留正确标记("c"=正确项),
     // dynamicClick 在此基础上切换选态("c"→"r" 对选 / " "→"w" 错选),判分靠它。
+    const vt = verdictTexts(this.plugin.settings);
     const data = {
       attrs: {
         mode: "non-immediate",
@@ -534,43 +633,27 @@ class StudyPanel extends Modal {
       options: ref.options.map((o) => ({ optIdx: o.optIdx, state: o.state, text: o.text })),
       details: ref.details,
       submitted: false,
+      hintReveal: this.plugin.settings.hintReveal, // 复习页提示同样按设置的显示时机
+      submit: true,
+      reset: "auto",
+      showReset: false, // 复习流程不显示"重置",作答锁在批改态
+      verdictOk: vt.ok,
+      verdictBad: vt.bad,
     };
-    data.submit = data.attrs.submit !== false;
-    data.reset = "auto";
-    data.showReset = false; // 复习流程不显示"重置",作答锁在批改态
-    const vt = verdictTexts(this.plugin.settings);
-    data.verdictOk = vt.ok;
-    data.verdictBad = vt.bad;
     const isMulti = data.options.filter((o) => o.state === "c").length > 1;
-    const container = root.createDiv({ cls: "bqb-study-card" });
-    const optSig = optSigOf(data.options);
+    // markdown-preview-view + markdown-rendered:让卡片里的题干/选项/提示走和笔记预览
+    // 完全相同的主题上下文(字号、行高、加粗色、段落间距),否则主题规则(只作用于
+    // .markdown-preview-view)在弹窗里全部失效 —— 表现为字更小、加粗不是主题色、换行位置不同。
+    const container = root.createDiv({ cls: "bqb-study-card markdown-preview-view markdown-rendered" });
     const order = ref.currentOrder && ref.currentOrder.length === data.options.length
       ? ref.currentOrder : sourceOrder(ref.options);
-    const ctrl = { key: cur.key, container, order, optSig, rerender: () => this.render() };
+    const ctrl = { key: cur.key, container, order, optSig: optSigOf(data.options), rerender: () => this.render() };
     const block = buildBlock(container, data);
-    // 渲染题干/选项/解析(Markdown / LaTeX,异步填字不阻塞交互挂接)
-    const qEl = block.querySelector(".quiz-question");
-    if (qEl) MarkdownRenderer.render(this.app, ref.question || t("(无题干)"), qEl, "", this.plugin).catch(() => {});
-    block.querySelectorAll(".quiz-option__body").forEach((bodyEl) => {
-      const oi = parseInt(bodyEl.parentElement.dataset.optIdx, 10);
-      const o = data.options.find((x) => x.optIdx === oi);
-      if (o) MarkdownRenderer.render(this.app, o.text, bodyEl, "", this.plugin).catch(() => {});
-    });
-    if (ref.details !== undefined) {
-      const dEl = block.querySelector(".quiz-details");
-      if (dEl) MarkdownRenderer.render(this.app, ref.details, dEl, "", this.plugin).catch(() => {});
-    }
-    reorderRowsTo(block, order);
-    applyVisuals(block, data, data.attrs.number, ctrl); // 建提交按钮+判定横幅,应用选态着色
-    // 点击选项:正牌 state 机(单选互斥/多选各自 toggle)
-    block.querySelectorAll(".quiz-option").forEach((optEl) => {
-      optEl.addEventListener("click", () => {
-        const oi = parseInt(optEl.dataset.optIdx, 10);
-        const opt = data.options.find((x) => x.optIdx === oi);
-        if (!opt) return;
-        dynamicClick(block, data, opt, ctrl, isMulti);
-      });
-    });
+    // 填字(题干/选项/解析)不阻塞交互挂接;填完再刷一次视觉——
+    // 标志盒对齐要量"真正渲染出来的那行"的行高,填字前后可能不同(这里是异步填的)
+    const tasks = fillCard(block, data, this.plugin, "");
+    finishCard(block, data, ctrl, isMulti);
+    Promise.all(tasks).then(() => applyVisuals(block, data, ctrl)).catch(() => {});
     // 提交判分:提交按钮自带的 submitQuiz 先跑(置 submitted+批改视觉),这里追加一次记账
     const subBtn = block.querySelector(".quiz-action-btn--submit");
     if (subBtn) {
@@ -586,14 +669,17 @@ class StudyPanel extends Modal {
     }
   }
   // 追加判定后的"下次复习时刻 + 下一题/完成"(原地插入,不重渲)
-  appendNext(root, cur) {
+  // withNext=false(浏览页):只写"下次复习",翻页交给恒驻的上一题/下一题按钮
+  appendNext(root, cur, withNext = true) {
     const span = root.createDiv({ cls: "bqb-study-rvnext" });
     span.setText(t("下次复习:{t}", { t: fmtTs(reviewDue(this.plugin.settings.study?.[cur.key]?.reviews)) }));
+    if (!withNext) return;
     const next = root.createEl("button", { cls: "bqb-study-next", text: t(this.rIdx + 1 >= this.rQueue.length ? "完成" : "下一题") });
     next.addEventListener("click", () => { this.rIdx++; this.rCommitted = null; this.render(); });
   }
   // 提交后判分落账:gradeSummary 计算对错 → 写复习记录(study 表)+ 当日热力 +1
-  record(cur, data, root) {
+  // withNext=false(浏览页):只显示"下次复习",不追加下一题按钮
+  record(cur, data, root, withNext = true) {
     const ok = gradeSummary(data).ok;
     if (ok) this.rOk++; else this.rBad++;
     const study = this.plugin.settings.study || {};
@@ -607,7 +693,7 @@ class StudyPanel extends Modal {
     act[dk] = (act[dk] || 0) + 1;
     this.plugin.settings.activity = act;
     this.plugin.saveSettings();
-    this.appendNext(root, cur);
+    this.appendNext(root, cur, withNext);
   }
   renderReviewDone(root) {
     root.createDiv({ cls: "bqb-study-greet" }).setText(t("复习完成"));
@@ -616,16 +702,211 @@ class StudyPanel extends Modal {
     btn.addEventListener("click", () => { this.rQueue = []; this.rCommitted = null; this.go("home"); });
   }
 
+  /* ---------- 浏览页:题库点题目进入,与复习页同貌;不结算,可自由前后翻 ---------- */
+  // 从题库点某题进入浏览:题组 = 题库页本次渲染的分组(按显示顺序),游标停在被点的那题。
+  // 进入前把题库页(标签/筛选/管理态/折叠/滚动)快照下来,返回时原样复原。
+  startBrowse(key) {
+    const gs = (this.listGroups || []).filter((g) => g && g.length);
+    let gi = gs.findIndex((g) => g.includes(key));
+    if (gi < 0) {
+      gs.unshift([key]);
+      gi = 0;
+    }
+    this.bGroups = gs.map((g) => [...g]);
+    this.bGi = gi;
+    this.bQi = Math.max(0, this.bGroups[gi].indexOf(key));
+    this.bPrev = {
+      tab: this.tab,
+      showFavs: this.showFavs,
+      mgmt: this.mgmt,
+      closed: new Set(this.closed),
+      scrollTop: this.contentEl ? this.contentEl.scrollTop : 0,
+    };
+    this.bDone = new Map();
+    this.go("browse");
+  }
+
+  // 返回题库:复原进入浏览前的页面(标签/筛选/管理态/折叠状态/滚动位置)
+  exitBrowse() {
+    const p = this.bPrev;
+    if (p) {
+      this.tab = p.tab;
+      this.showFavs = p.showFavs;
+      this.mgmt = p.mgmt;
+      this.closed = new Set(p.closed);
+    }
+    this.bPrev = null;
+    this.bGroups = [];
+    this.bDone = new Map();
+    this.page = "bank";
+    this.render();
+    if (p && this.contentEl) this.contentEl.scrollTop = p.scrollTop;
+  }
+
+  // 前后翻页:组内前后走;走到组尾/组首则跨到相邻题组;所有题组走完则首尾相衔循环,
+  // 永不停下结算(浏览页没有"完成"态)
+  browseStep(d) {
+    const gs = this.bGroups;
+    const n = gs.length;
+    if (!n) return;
+    if (d > 0) {
+      if (this.bQi + 1 < gs[this.bGi].length) this.bQi++;
+      else { this.bGi = (this.bGi + 1) % n; this.bQi = 0; }
+    } else if (this.bQi > 0) {
+      this.bQi--;
+    } else {
+      this.bGi = (this.bGi - 1 + n) % n;
+      this.bQi = gs[this.bGi].length - 1;
+    }
+    this.render();
+  }
+
+  renderBrowse(root) {
+    root = root.createDiv({ cls: "bqb-rvpage" });
+    const group = this.bGroups[this.bGi] || [];
+    if (!group.length) {
+      this.backBtn(root, () => this.exitBrowse()); // 兜底:这张空页也能退回题库
+      root.createDiv({ cls: "bqb-study-empty" }).setText(t("全库还没有可浏览的 quiz(id 索引为空)。"));
+      return;
+    }
+    const key = group[this.bQi];
+    const ref = lookupId(key);
+    if (!ref) {
+      root.createDiv({ cls: "bqb-study-empty" }).setText(t("找不到源题"));
+      return;
+    }
+    const head = root.createDiv({ cls: "bqb-study-rvhead" });
+    this.backBtn(head, () => this.exitBrowse());
+    // 题号按"所在小组"计(组内第几 / 本组总数),不跨组累加
+    head.createSpan({ cls: "bqb-study-rvprog" }).setText(t("第 {a} / {b} 题", { a: this.bQi + 1, b: group.length }));
+    const srcName = ref.file.replace(/\.[^.]+$/, "");
+    const qtype = quizTypeOf(ref.options, compileTypeRules(this.plugin.settings.qtypes));
+    head.createSpan({ cls: "bqb-study-rvmeta-dot", text: " · " });
+    head.createSpan({ cls: "bqb-study-rvmeta bqb-study-rvmeta--strong" }).setText(qtype);
+    head.createSpan({ cls: "bqb-study-rvmeta-dot", text: " · " });
+    // 卡片来源:可点,悬停加下划线;点击跳到源笔记的题目位置
+    const src = head.createSpan({ cls: "bqb-study-rvmeta bqb-study-rvsrc", text: srcName });
+    src.setAttribute("aria-label", t("跳到原文"));
+    src.addEventListener("click", () => this.jumpToSource(ref));
+    // 新/旧徽标(与复习页同一套观感)
+    const isNew = !(this.plugin.settings.study?.[key]?.reviews || []).length;
+    head.createSpan({ cls: "bqb-study-rvbadge " + (isNew ? "bqb-rvbadge-new" : "bqb-rvbadge-old") })
+      .setText(t(isNew ? "新卡" : "复习"));
+
+    const vt = verdictTexts(this.plugin.settings);
+    const data = {
+      attrs: {
+        mode: "non-immediate",
+        shuffle: true,
+        number: this.plugin.settings.defaultNumbering || "none",
+        submit: true,
+        reset: "auto",
+      },
+      question: ref.question || t("(无题干)"),
+      options: ref.options.map((o) => ({ optIdx: o.optIdx, state: o.state, text: o.text })),
+      details: ref.details,
+      submitted: false,
+      hintReveal: this.plugin.settings.hintReveal,
+      submit: true,
+      reset: "auto",
+      showReset: false,
+      verdictOk: vt.ok,
+      verdictBad: vt.bad,
+    };
+    // 本次浏览里已作答过的题:回看时按当时的选择顺序 + 作答态复原(批改态一并显示)
+    const done = this.bDone.get(key);
+    if (done) {
+      for (const [optIdx, state] of done.states) {
+        const o = data.options.find((x) => x.optIdx === optIdx);
+        if (o) o.state = state;
+      }
+      data.submitted = true;
+    }
+    const isMulti = data.options.filter((o) => o.state === "c" || o.state === "r").length > 1;
+    const container = root.createDiv({ cls: "bqb-study-card markdown-preview-view markdown-rendered" });
+    const order = done && done.order.length === data.options.length
+      ? done.order
+      : (ref.currentOrder && ref.currentOrder.length === data.options.length
+        ? ref.currentOrder : sourceOrder(ref.options));
+    const ctrl = { key, container, order, optSig: optSigOf(data.options), rerender: () => this.render() };
+    const block = buildBlock(container, data);
+    const tasks = fillCard(block, data, this.plugin, "");
+    finishCard(block, data, ctrl, isMulti);
+    Promise.all(tasks).then(() => applyVisuals(block, data, ctrl)).catch(() => {});
+    if (done) this.appendNext(root, { key }, false); // 回看已答的题:仍显示"下次复习",不再出下一题
+    // 提交:与复习页同一套判分记账(算一次复习);记完只更新"下次复习",翻页交给下面的恒驻按钮
+    const subBtn = block.querySelector(".quiz-action-btn--submit");
+    if (subBtn) {
+      subBtn.addEventListener("click", () => {
+        if (this.bDone.has(key)) return; // 本次浏览已记过账,防重复
+        this.bDone.set(key, {
+          order: [...ctrl.order],
+          states: data.options.map((o) => [o.optIdx, o.state]),
+        });
+        this.record({ key }, data, root, false);
+      });
+    }
+    // 恒驻翻页条:上一题 / 下一题(不隐藏、不结算;首尾循环)
+    const nav = root.createDiv({ cls: "bqb-browse-nav" });
+    const prev = nav.createEl("button", { cls: "bqb-browse-btn", text: t("上一题") });
+    prev.addEventListener("click", () => this.browseStep(-1));
+    const next = nav.createEl("button", { cls: "bqb-browse-btn", text: t("下一题") });
+    next.addEventListener("click", () => this.browseStep(1));
+  }
+
+  // 跳到源笔记的题目位置:打开文件 → 编辑视图置光标 / 阅读视图按 data-bqb-id 精确定位。
+  // 面板是模态(会遮住笔记),跳转前先关掉;定位失败时至少停在文件里(openFile 已带 line 提示)
+  async jumpToSource(ref) {
+    const file = this.app.vault.getAbstractFileByPath(ref.file);
+    if (!file) {
+      new Notice(t("找不到源文件"));
+      return;
+    }
+    const line = Math.max(0, typeof ref.line === "number" ? ref.line : 0);
+    const id = ref.attrs && ref.attrs.id ? baseOf(ref.attrs.id) : "";
+    pendingView = this.snapshotView(); // 关面板前记原位:编辑完再打开直接回到这道题
+    this.close();
+    let view = null;
+    try {
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file, { eState: { line } });
+      view = leaf.view;
+    } catch (e) {
+      return; // 打不开就算了,别把面板流程搞断
+    }
+    const pin = () => {
+      try {
+        if (view && view.editor && view.editor.setCursor) {
+          // 编辑/源码视图:光标落到围栏行,滚到屏幕中央
+          view.editor.setCursor({ line });
+          view.editor.scrollIntoView({ from: { line }, to: { line } }, true);
+          return;
+        }
+        // 阅读视图:找渲染时打了 data-bqb-id 的块,滚到中间
+        if (id && view && view.containerEl) {
+          const el = view.containerEl.querySelector(`[data-bqb-id="${id}"]`);
+          if (el) el.scrollIntoView({ block: "center" });
+        }
+      } catch (e) { /* 定位失败就留在文件里 */ }
+    };
+    for (const ms of [0, 120, 400]) setTimeout(pin, ms);
+  }
+
   /* ---------- 题库页(原收藏夹):全库浏览 + 显示收藏 ---------- */
   renderList(root) {
+    this.listGroups = []; // 本次渲染的行分组(浏览模式据此跨组前后翻)
     const favs = this.plugin.settings.favorites || {};
     const favIds = Object.keys(favs);
     // 返回主页 + 顶栏;返回钮两页共用 backBtn(回主页同时清复习会话,统一路由)
     const bar = root.createDiv({ cls: "bqb-favbar" });
     this.backBtn(bar);
     const head = bar.createDiv({ cls: "bqb-favlist-head" });
-    const showBtn = bar.createEl("button", { cls: "bqb-showfav" + (this.showFavs ? " bqb-showfav--on" : ""), text: t("显示收藏") });
+    // 两开关恒用普通样式(不做按下态区分,开没开看列表内容即可)
+    const showBtn = bar.createEl("button", { cls: "bqb-showfav", text: t("显示收藏") });
     showBtn.addEventListener("click", () => { this.showFavs = !this.showFavs; this.render(); });
+    // 管理分类模式开关:开启后行尾变多选框、组头出全选框、底部出批量操作条(替代原每行归类按钮)
+    const mgmtBtn = bar.createEl("button", { cls: "bqb-showfav", text: t("管理分类") });
+    mgmtBtn.addEventListener("click", () => { this.mgmt = !this.mgmt; this.mgmtSel.clear(); this.render(); });
     // 数据源:全库所有 quiz id(id 索引);"显示收藏"开着时只列已收藏
     let keys;
     if (this.showFavs) {
@@ -650,9 +931,36 @@ class StudyPanel extends Modal {
     if (this.tab === "folder") this.renderFolder(root, keys);
     else if (this.tab === "cats") this.renderCats(root, keys);
     else if (this.tab === "types") this.renderTypes(root, keys);
+    if (this.mgmt) this.renderMgmtBar();
   }
 
-  // 共享条目行:星(点亮=已收藏,灰=未收藏,点击切换) + 题干缩略 + id/状态/时间/分类芯片 + 标签钮 + 点行跳转
+  // 登记一个题组(本次渲染的行分组):浏览页据此跨组翻页。返回组下标
+  addGroup(rows) {
+    this.listGroups.push([...rows]);
+    return this.listGroups.length - 1;
+  }
+
+  // 管理分类模式操作条:挂弹窗层最底部(不随内容滚动、不遮挡列表),对选中项批量归类/收藏;未选时按钮置灰
+  renderMgmtBar() {
+    // 允许原地刷新(勾选变化时只重建这条操作条,列表与滚动、折叠状态都不动)
+    this.modalEl.querySelectorAll(".bqb-mgmtbar").forEach((el) => el.remove());
+    const bar = this.modalEl.createDiv({ cls: "bqb-mgmtbar" });
+    const n = this.mgmtSel.size;
+    const add = (text, fn) => {
+      const b = bar.createEl("button", { text });
+      b.disabled = n === 0;
+      if (n > 0) b.addEventListener("click", fn);
+    };
+    add(t("添加到…"), (ev) => this.catMenuBatch("add", ev));
+    add(t("移动到…"), (ev) => this.catMenuBatch("move", ev));
+    add(t("全部收藏"), () => this.favBatch(true));
+    add(t("全部取消收藏"), () => this.favBatch(false));
+    bar.createDiv({ cls: "bqb-mgmtbar-n" }).setText(t("已选 {n} 题", { n }));
+    // 管理分类页不放「开始练习」:练习只能从题库点题目进入浏览(2026-10 按需求移除)
+  }
+
+  // 共享条目行:星(点亮=已收藏,灰=未收藏,点击切换) + 题干缩略 + id/状态/时间/分类芯片
+  // + 行尾「跳到原文」图标 | 管理分类模式:多选框(点行不跳转) | 普通模式:点行进浏览页
   favRow(parent, key, ref) {
     const favs = this.plugin.settings.favorites || {};
     const assign = this.plugin.settings.catAssign || {};
@@ -663,7 +971,8 @@ class StudyPanel extends Modal {
     setIcon(star, "star");
     if (faved) star.addClass("bqb-fav-on");
     else star.addClass("bqb-fav-off");
-    star.addEventListener("click", () => {
+    star.addEventListener("click", (ev) => {
+      ev.stopPropagation(); // 只切收藏,不触发行跳转
       toggleFav(key, this.plugin);
       this.render();
     });
@@ -679,39 +988,124 @@ class StudyPanel extends Modal {
     else meta.createSpan({ cls: "bqb-favlist-state bqb-state-new" }).setText(t("待学习"));
     if (faved) meta.createSpan({ cls: "bqb-favlist-time" }).setText(fmtTs(favs[key].addedAt || Date.now()));
     for (const c of assign[key] || []) meta.createSpan({ cls: "bqb-favlist-cat" }).setText(c);
-    const catBtn = row.createEl("a", { cls: "bqb-favlist-catbtn clickable-icon", attr: { "aria-label": t("归类到…") } });
-    setIcon(catBtn, "tags");
-    catBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      this.catMenu(key, ev);
-    });
-    // 整行可点跳转源文件(星/标签钮已 stopPropagation,不会误触);弹窗先关,主区切文件
+    // 行尾「跳到原文」图标:原挂在整行 info 上的文件路径悬浮窗改挂到这里,点击跳到 md 原文的题目位置
     if (ref) {
-      row.addEventListener("click", () => this.jump(ref.file));
-      info.title = ref.file;
+      const jump = row.createEl("a", { cls: "bqb-favlist-jump clickable-icon", attr: { "aria-label": ref.file } });
+      setIcon(jump, "arrow-right");
+      jump.addEventListener("click", (ev) => {
+        ev.stopPropagation(); // 只跳转,不触发行的浏览
+        this.jumpToSource(ref);
+      });
+    }
+    if (this.mgmt) {
+      // 管理分类模式:行尾多选框;选中集存 mgmtSel(弹窗内临时状态)
+      const box = row.createEl("input", { cls: "checkbox bqb-mgmtbox", attr: { type: "checkbox" } });
+      box.checked = this.mgmtSel.has(key);
+      box.addEventListener("click", (ev) => ev.stopPropagation()); // 不触发行跳转
+      box.addEventListener("change", () => {
+        if (box.checked) this.mgmtSel.add(key); else this.mgmtSel.delete(key);
+        this.syncMgmt(); // 只原地同步组头/底部条:不重渲 → 折叠与滚动位置不动
+      });
+      // 组头「全选」也要能把本行勾上:登记到同步表
+      this._mgmtSyncs.push(() => { box.checked = this.mgmtSel.has(key); });
+    } else if (ref) {
+      // 点行 = 进浏览页看这道题(题组取它所在的分组,可前后自由翻)
+      row.addEventListener("click", () => this.startBrowse(key));
     } else {
       info.addClass("bqb-favlist-dead");
     }
   }
 
-  // 归类菜单:原生 Menu 多选勾;分类独立于收藏——未收藏的题也能归类(存 catAssign)。「未分类」恒在底部
-  catMenu(key, ev) {
+  // 勾选变化后的原地同步:组头全选态 + 底部操作条(计数/按钮)。
+  // 不重渲列表 —— 重渲会把折叠状态和滚动位置一起打乱(以前"全选就把树全打开、滚轮被顶走"的根源)
+  syncMgmt() {
+    for (const fn of this._mgmtSyncs) fn();
+    this.renderMgmtBar();
+  }
+
+  // 全选/全不选(管理分类模式,置于组头尾部、右对齐):「文字 · ☐」,文字在框左侧,中点间隔;勾=整组已选。
+  // label 包住文字+框,点文字同样切换;click 拦截防触发组头折叠。onState(checked) 供组头联动(如删除按钮显隐)
+  allBox(keys, onState) {
+    const label = createEl("label", { cls: "bqb-mgmtall" });
+    const txt = label.createSpan();
+    label.createSpan({ cls: "bqb-mgmt-dot", text: "·" });
+    const box = label.createEl("input", { cls: "checkbox", attr: { type: "checkbox" } });
+    // 勾选态 / 文字 / 组头联动(如「删除分类」显隐)统一在这里刷新
+    const refresh = () => {
+      box.checked = keys.length > 0 && keys.every((k) => this.mgmtSel.has(k));
+      txt.setText(t(box.checked ? "全不选" : "全选"));
+      onState?.(box.checked);
+    };
+    refresh();
+    // 登记到本次渲染的同步表:别处勾选后由 syncMgmt 原地刷新,不重渲列表
+    this._mgmtSyncs.push(refresh);
+    label.addEventListener("click", (ev) => ev.stopPropagation());
+    box.addEventListener("change", () => {
+      if (box.checked) for (const k of keys) this.mgmtSel.add(k);
+      else for (const k of keys) this.mgmtSel.delete(k);
+      this.syncMgmt();
+    });
+    return label;
+  }
+
+  // "删除分类"红字(管理模式下全选自建分类后出现,替代原"×"按钮):删除分类,其下题目全部回未分类
+  delCatSpan(delName) {
+    const span = createEl("span", { cls: "bqb-mgmt-del", text: t("删除分类") });
+    span.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.plugin.settings.favCats = (this.plugin.settings.favCats || []).filter((c) => c !== delName);
+      const assign = this.plugin.settings.catAssign || {};
+      for (const k of Object.keys(assign)) {
+        assign[k] = (assign[k] || []).filter((x) => x !== delName);
+        if (!assign[k].length) delete assign[k];
+      }
+      this.plugin.settings.catAssign = assign;
+      this.plugin.saveSettings();
+      this.render();
+    });
+    return span;
+  }
+
+  // 批量收藏/取消收藏(作用于选中项)
+  favBatch(fav) {
+    const favs = this.plugin.settings.favorites || {};
+    for (const k of this.mgmtSel) {
+      if (fav) { if (!favs[k]) favs[k] = { addedAt: Date.now() }; }
+      else delete favs[k];
+    }
+    this.plugin.settings.favorites = favs;
+    this.plugin.saveSettings();
+    this.render();
+  }
+
+  // 批量归类菜单:mode="add" 勾选式增删(按全组是否都已含来定勾选态);mode="move" 单选式整体替换。
+  // 分类独立于收藏,未收藏的题同样可归类;「未分类」= 清除选中项的归属
+  catMenuBatch(mode, ev) {
     const cats = this.plugin.settings.favCats || [];
-    const cur = this.plugin.settings.catAssign || {};
-    const mine = cur[key] || [];
+    const assign = this.plugin.settings.catAssign || {};
+    const keys = [...this.mgmtSel];
+    const allHave = (c) => keys.every((k) => (assign[k] || []).includes(c));
+    const applyToAll = (fn) => {
+      for (const k of keys) fn(k);
+      this.plugin.settings.catAssign = assign;
+      this.plugin.saveSettings();
+      this.render();
+    };
     const menu = new Menu();
     for (const c of cats) {
       menu.addItem((item) =>
         item
           .setTitle(c)
-          .setChecked(mine.includes(c))
+          .setChecked(mode === "add" ? allHave(c) : keys.some((k) => (assign[k] || []).includes(c)))
           .onClick(() => {
-            const assign = this.plugin.settings.catAssign || {};
-            const has = (assign[key] || []).includes(c);
-            assign[key] = has ? assign[key].filter((x) => x !== c) : [...(assign[key] || []), c];
-            this.plugin.settings.catAssign = assign;
-            this.plugin.saveSettings();
-            this.render();
+            if (mode === "add") {
+              applyToAll((k) => {
+                const has = (assign[k] || []).includes(c);
+                assign[k] = has ? (assign[k] || []).filter((x) => x !== c) : [...(assign[k] || []), c];
+              });
+            } else {
+              applyToAll((k) => { assign[k] = [c]; });
+            }
           })
       );
     }
@@ -719,13 +1113,8 @@ class StudyPanel extends Modal {
     menu.addItem((item) =>
       item
         .setTitle(t("未分类"))
-        .setChecked(!mine.length)
         .onClick(() => {
-          const assign = this.plugin.settings.catAssign || {};
-          delete assign[key];
-          this.plugin.settings.catAssign = assign;
-          this.plugin.saveSettings();
-          this.render();
+          applyToAll((k) => { delete assign[k]; });
         })
     );
     menu.showAtMouseEvent(ev);
@@ -757,29 +1146,61 @@ class StudyPanel extends Modal {
   }
 
   // 递归渲染目录树:目录/文件都是可折叠框(border-left 逐层缩进即成树);同级按名字排序稳定显示
-  treeNode(parent, node, cnt) {
+  // prefix = 上层路径,给每个组一个稳定 id,供折叠状态在重渲后复原
+  treeNode(parent, node, cnt, prefix = "") {
     for (const [d, sub] of [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const id = "d:" + prefix + d;
       const grp = parent.createDiv({ cls: "bqb-favgrp" });
       const head = grp.createDiv({ cls: "bqb-favgrp-head" });
       head.setText(d + " · " + cnt(sub));
+      if (this.mgmt) head.appendChild(this.mgmtRight([this.allBox(this.collectKeys(sub))])); // 全选整棵子树,贴右
       const body = grp.createDiv({ cls: "bqb-favgrp-body" });
-      head.addEventListener("click", () => this.foldGrp(grp, body));
-      this.treeNode(body, sub, cnt);
+      head.addEventListener("click", () => this.foldGrp(grp, body, id));
+      this.applyFold(grp, body, id);
+      this.treeNode(body, sub, cnt, prefix + d + "/");
     }
     for (const f of [...node.files].sort((a, b) => a.name.localeCompare(b.name))) {
+      const id = "f:" + prefix + f.name;
       const grp = parent.createDiv({ cls: "bqb-favgrp" });
       const head = grp.createDiv({ cls: "bqb-favgrp-head" });
       head.setText(f.name + " · " + f.rows.length);
+      if (this.mgmt) head.appendChild(this.mgmtRight([this.allBox([...f.rows])]));
       const body = grp.createDiv({ cls: "bqb-favgrp-body" });
-      head.addEventListener("click", () => this.foldGrp(grp, body));
+      head.addEventListener("click", () => this.foldGrp(grp, body, id));
+      this.applyFold(grp, body, id);
+      this.addGroup(f.rows); // 一个文件 = 一个题组
       for (const r of f.rows) this.favRow(body, r, lookupId(r));
     }
   }
 
-  foldGrp(grp, body) {
+  // 管理模式组头右侧容器:包住「删除分类·全不选·☐」,margin-left:auto 整体贴最右
+  mgmtRight(children) {
+    const rt = createEl("span", { cls: "bqb-mgmtrt" });
+    for (const el of children) rt.appendChild(el);
+    return rt;
+  }
+
+  // 递归收集目录树节点下全部题目 key(全选用)
+  collectKeys(node) {
+    const out = [];
+    for (const sub of node.dirs.values()) out.push(...this.collectKeys(sub));
+    for (const f of node.files) out.push(...f.rows);
+    return out;
+  }
+
+  // 折叠/展开一个组,并把状态记进 this.closed(重渲后按 id 复原,不会全被打开)
+  foldGrp(grp, body, id) {
     const foldUp = body.style.display !== "none";
     body.style.display = foldUp ? "none" : "";
     grp.toggleClass("bqb-favgrp-closed", foldUp);
+    if (id) { if (foldUp) this.closed.add(id); else this.closed.delete(id); }
+  }
+
+  // 渲染时按记录复原折叠态(只收起记住的组,其余默认展开)
+  applyFold(grp, body, id) {
+    if (!id || !this.closed.has(id)) return;
+    body.style.display = "none";
+    grp.addClass("bqb-favgrp-closed");
   }
 
   renderCats(root, keys) {
@@ -842,52 +1263,63 @@ class StudyPanel extends Modal {
     }
   }
 
-  // 可折叠分组框;delName 非 null = 自建分类(可删,删除同时从各条目 cats 里清掉,不取消收藏)
+  // 可折叠分组框;delName 非 null = 自建分类。管理模式下全选该组后,组头尾部出现红字「删除分类」
+  // (替代原"×"),删除同时从各条目 cats 里清掉(不取消收藏)
   grpBox(root, title, rows, delName) {
+    const id = "g:" + this.tab + ":" + title;
     const grp = root.createDiv({ cls: "bqb-favgrp" });
     const grpHead = grp.createDiv({ cls: "bqb-favgrp-head" });
     grpHead.setText(title + " · " + rows.length);
-    if (delName !== null) {
-      const del = grpHead.createEl("a", { cls: "bqb-favgrp-del clickable-icon", attr: { "aria-label": t("删除分类") } });
-      setIcon(del, "x");
-      del.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        this.plugin.settings.favCats = (this.plugin.settings.favCats || []).filter((c) => c !== delName);
-        // 删分类同时从各条目的分类归属里清掉(不取消收藏)
-        const assign = this.plugin.settings.catAssign || {};
-        for (const k of Object.keys(assign)) {
-          assign[k] = (assign[k] || []).filter((x) => x !== delName);
-          if (!assign[k].length) delete assign[k];
-        }
-        this.plugin.settings.catAssign = assign;
-        this.plugin.saveSettings();
-        this.render();
+    if (this.mgmt && rows.length) {
+      // 组头尾部右对齐块:删除分类 · 全不选 · ☐(自建分类才有删除);容器 margin-left:auto 整体贴最右
+      const kids = [];
+      if (delName !== null) {
+        kids.push(this.delCatSpan(delName));
+        kids.push(createEl("span", { cls: "bqb-mgmt-dot", text: "·" }));
+      }
+      const all = this.allBox(rows, (checked) => {
+        const show = checked ? "" : "none"; // 全选时才显示「删除分类」和它前面的点号
+        for (const el of kids) el.style.display = show;
       });
+      kids.push(all);
+      grpHead.appendChild(this.mgmtRight(kids));
     }
     const body = grp.createDiv({ cls: "bqb-favgrp-body" });
-    grpHead.addEventListener("click", () => this.foldGrp(grp, body));
+    grpHead.addEventListener("click", () => this.foldGrp(grp, body, id));
+    this.applyFold(grp, body, id);
+    this.addGroup(rows.filter((k) => lookupId(k))); // 一个分组 = 一个题组(失效题不进浏览序列)
     for (const r of rows) this.favRow(body, r, lookupId(r));
   }
+}
 
-  // 跳转源笔记:在主区 markdown 叶子里打开(弹窗先关,主区切到目标);文件查找走 app.vault(workspace.vault 不可靠)。
-  jump(path) {
-    const app = this.plugin.app;
-    if (studyPanel) studyPanel.close(); // 切走后弹窗收起,主区干净露出目标
-    const f = app.vault.getAbstractFileByPath(path);
-    if (!f) {
-      new Notice(t("找不到 {p}", { p: path }));
-      return;
-    }
-    const ws = app.workspace;
-    const md = ws.getLeavesOfType("markdown");
-    const leaf = md.length ? md[md.length - 1] : ws.getLeaf(true);
-    Promise.resolve(leaf.openFile(f))
-      .then(() => ws.revealLeaf(leaf))
-      .catch((e) => {
-        console.error("[bqb] jump:", e);
-        new Notice(t("打开失败 {p}", { p: path }));
-      });
-  }
+/* --------- 卡片内容填充 / 交互挂接(笔记块与复习弹窗共用一套) --------- */
+
+// 把题干/选项/解析(Markdown / LaTeX)灌进块内;返回渲染任务,调用方按需 await 以保时序
+function fillCard(block, display, plugin, sourcePath) {
+  const render = (text, el) => MarkdownRenderer.render(plugin.app, text, el, sourcePath, plugin).catch(() => {});
+  const tasks = [];
+  const qEl = block.querySelector(".quiz-question");
+  if (qEl) tasks.push(render(display.question, qEl));
+  block.querySelectorAll(".quiz-option__body").forEach((bodyEl) => {
+    const o = optOf(display.options, bodyEl.parentElement.dataset.optIdx);
+    if (o) tasks.push(render(o.text, bodyEl));
+  });
+  const dEl = block.querySelector(".quiz-details");
+  if (dEl && display.details !== undefined) tasks.push(render(display.details, dEl));
+  return tasks;
+}
+
+// 顺序应用 + 视觉状态 + 作答交互;multi = null 表示静态块(不挂交互),false=单选,true=多选
+function finishCard(block, display, ctrl, multi) {
+  if (ctrl.order) reorderRowsTo(block, ctrl.order);
+  applyVisuals(block, display, ctrl);
+  if (multi === null) return;
+  block.querySelectorAll(".quiz-option").forEach((optEl) => {
+    optEl.addEventListener("click", () => {
+      const opt = optOf(display.options, optEl.dataset.optIdx);
+      if (opt) dynamicClick(block, display, opt, ctrl, multi);
+    });
+  });
 }
 
 function registerQuizProcessor(plugin) {
@@ -938,8 +1370,7 @@ function registerQuizProcessor(plugin) {
     // 卡片瞬态 key:有稳定 id 的块用 "文件+id"(计数器 id 永不变 → 编辑题干/选项不换 key,
     // 顺序与作答自然延续);无 id 的块(绑定显示/手写无 id)回落内容 key。
     // 选项真的变了由 optSig 守卫判定(见 resolveCard),与新开一样重摇。
-    const hasId = display.attrs.id ? true : false;
-    const cardKey = hasId
+    const cardKey = display.attrs.id
       ? file + "\u0000" + baseOf(display.attrs.id)
       : file + "\u0000" + display.question + "\u0001" +
         display.options.map((o) => o.state + "\u0001" + o.text).join("\u0002") +
@@ -959,71 +1390,44 @@ function registerQuizProcessor(plugin) {
     display.submit = display.attrs.submit !== false;
     display.reset = display.attrs.reset === "manual" ? "manual" : "auto";
     display.showReset = plugin.settings.showReset !== false;
+    display.hintReveal = plugin.settings.hintReveal; // [h] 提示显示时机:click(默认,批改后) / always(常驻)
     // 批改文案模板(设置可调):{ans}=正确答案字母 {pick}=你的选择字母
-const vt = verdictTexts(plugin.settings);
+    const vt = verdictTexts(plugin.settings);
     display.verdictOk = vt.ok;
     display.verdictBad = vt.bad;
     // sticky = 手动重置模式:跨容器保留作答/批改态(切页回来停留在答案状态,直到按重置)
     const sticky = display.reset === "manual";
 
     // —— 决定顺序 ——
-    let order;
+    // 绑定/复制:跟随原题洗牌后的实际显示顺序(currentOrder),未渲染过回落其源顺序;
+    // 其余情况 order 留空,由下面的分支决定(静态块=源顺序,动态块=瞬态顺序或重摇)
+    let order = bound ? (display.order || sourceOrder(display.options)) : null;
     let states = null;
-    if (bound) {
-      // 绑定/复制:跟随原题洗牌后的实际显示顺序(currentOrder);未渲染过回落其源顺序
-      order = display.order || sourceOrder(display.options);
-      if (isDynamic) {
-        // copy 可作答:接卡片瞬态,重渲后恢复作答/批改态
-        const res = resolveCard(cardKey, container, optSig, sticky);
-        if (res.redraw && res.entry) {
-          states = res.entry.states || null;
-          display.submitted = !!res.entry.submitted;
-        }
-        else saveCard(cardKey, container, order, null, optSig, false);
-      }
-    } else if (isDynamic) {
+    if (isDynamic) {
+      // 动态块(含 copy):接卡片瞬态,重渲后恢复作答/批改态
       const res = resolveCard(cardKey, container, optSig, sticky);
       if (res.redraw && res.entry) {
-        order = res.entry.order || sourceOrder(display.options);
+        order = order || res.entry.order || sourceOrder(display.options);
         states = res.entry.states || null;
         display.submitted = !!res.entry.submitted;
       } else {
-        // 新开(新容器/换卡/重开文件/选项真变了)重新随机
-        order = display.attrs.shuffle !== false ? randomOrder(display.options) : sourceOrder(display.options);
+        // 新开(新容器/换卡/重开文件/选项真变了)重新随机(绑定块仍跟随目标顺序)
+        if (!order) order = display.attrs.shuffle !== false ? randomOrder(display.options) : sourceOrder(display.options);
         saveCard(cardKey, container, order, null, optSig, false);
       }
-      // 刷新索引里该题的当前显示顺序;仅当顺序真变了才广播(否则每个绑定重渲触发无限重渲风暴)
-      if (display.attrs.id && order && setOrderOf(display.attrs.id, order)) {
+      // 源题刷新索引里该题的当前显示顺序;仅当顺序真变了才广播(否则绑定重渲互相触发成风暴)
+      if (!bound && display.attrs.id && setOrderOf(display.attrs.id, order)) {
         plugin.debugLog("order changed:", display.attrs.id, JSON.stringify(order));
         notifyLiveBindings(new Set([baseOf(display.attrs.id)]));
       }
-    } else {
-      order = sourceOrder(display.options);
     }
+    order = order || sourceOrder(display.options);
 
     // 批改流上下文(提交/重置按钮与批改态保存共用;此刻 order 已定稿,值捕获即可)
     const ctrl = { key: cardKey, container, order, optSig, rerender: () => runRender(source, el, ctx) };
 
     // 渲染题干、选项、解析(Markdown / LaTeX)
-    const tasks = [];
-    const questionEl = block.querySelector(".quiz-question");
-    if (questionEl) {
-      tasks.push(MarkdownRenderer.render(plugin.app, display.question, questionEl, ctx.sourcePath, plugin));
-    }
-    block.querySelectorAll(".quiz-option__body").forEach((bodyEl) => {
-      const oi = parseInt(bodyEl.parentElement.dataset.optIdx, 10);
-      const o = display.options.find((x) => x.optIdx === oi);
-      if (o) {
-        tasks.push(MarkdownRenderer.render(plugin.app, o.text, bodyEl, ctx.sourcePath, plugin));
-      }
-    });
-    if (display.details !== undefined) {
-      const detailsEl = block.querySelector(".quiz-details");
-      if (detailsEl) {
-        tasks.push(MarkdownRenderer.render(plugin.app, display.details, detailsEl, ctx.sourcePath, plugin));
-      }
-    }
-    await Promise.all(tasks);
+    await Promise.all(fillCard(block, display, plugin, file));
 
     // 恢复作答(仅动态块翻面重渲染)
     if (states) {
@@ -1031,10 +1435,7 @@ const vt = verdictTexts(plugin.settings);
         if (states.has(o.optIdx)) o.state = states.get(o.optIdx);
       }
     }
-    // 顺序应用
-    if (isDynamic && order) reorderRowsTo(block, order);
-    else if (bound && order) reorderRowsTo(block, order);
-    applyVisuals(block, display, display.attrs.number, ctrl);
+    finishCard(block, display, ctrl, isDynamic ? isMulti : null);
     noteRendered(cardKey, container);
     // 收藏 key:按题目 id 登记(不带文件前缀)→ 源题与 bind/copy 镜像(渲染目标题,
     // 其 attrs.id 被置 null)统一记账到同一 id 上:任一处收藏/取消收藏全部联动。
@@ -1044,18 +1445,8 @@ const vt = verdictTexts(plugin.settings);
       : (rawAttrs.binding ? baseOf(rawAttrs.binding.target) : cardKey);
     // 收藏按钮(编辑=排进 "</>" 图标行;阅读=块内右上角悬浮;key 稳定 → 收藏跨渲染保留)
     setupFavoriteButton(block, plugin, favKey);
-
-    // 动态块绑定点击(copy 命中时同样可作答,瞬态只在本容器)
-    if (isDynamic) {
-      block.querySelectorAll(".quiz-option").forEach((optEl) => {
-        optEl.addEventListener("click", () => {
-          const oi = parseInt(optEl.dataset.optIdx, 10);
-          const opt = display.options.find((x) => x.optIdx === oi);
-          if (!opt) return;
-          dynamicClick(block, display, opt, ctrl, isMulti);
-        });
-      });
-    }
+    // 给源题块打上 id 标记:阅读视图下"跳到原文"靠它精确定位(lookupId(...).line 只给近似行号)
+    if (display.attrs.id) el.dataset.bqbId = baseOf(display.attrs.id);
   }
 
   plugin.registerMarkdownCodeBlockProcessor("quiz", (source, el, ctx) => {
@@ -1067,14 +1458,23 @@ const vt = verdictTexts(plugin.settings);
 
 export default class QuizBlockPlugin extends Plugin {
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const stored = (await this.loadData()) || {};
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+    // 兼容旧数据:提示边距曾是一个左右对称的 hintMarginX,现拆成左/右两项
+    if (stored.hintMarginX != null) {
+      if (stored.hintMarginLeft == null) this.settings.hintMarginLeft = stored.hintMarginX;
+      if (stored.hintMarginRight == null) this.settings.hintMarginRight = stored.hintMarginX;
+      delete this.settings.hintMarginX;
+    }
+    delete this.settings.optLabelAlign; // 旧的"标志整行居中"开关已废除(改为对齐首行)
+    delete this.settings.hintBubble; // 气泡式提示已整体移除
     // 兼容旧数据:补齐嵌套按钮配置;悬停从字符串(bright/dark)迁到数值(-1..1)
     this.settings.btnSubmit = Object.assign({}, DEFAULT_SETTINGS.btnSubmit, this.settings.btnSubmit);
     this.settings.btnReset = Object.assign({}, DEFAULT_SETTINGS.btnReset, this.settings.btnReset);
     for (const k of ["btnSubmit", "btnReset"]) {
       const c = this.settings[k];
+      // 旧格式 hover 是字符串(bright/dark):迁到数值 -0.12..0.12
       if (typeof c.hover !== "number") c.hover = c.hover === "dark" ? -0.12 : 0.12;
-      if (c.hover === "string") c.hover = 0; // 双保险
     }
     // 兼容旧数据:补齐收藏按钮微调配置
     this.settings.favBtn = Object.assign({}, DEFAULT_SETTINGS.favBtn, this.settings.favBtn);
@@ -1118,7 +1518,7 @@ export default class QuizBlockPlugin extends Plugin {
     // 复习排期表与每日热力表(stored 持久化;键为题目 id / YYYY-MM-DD)。旧数据没有 → 空对象
     if (!this.settings.study || typeof this.settings.study !== "object" || Array.isArray(this.settings.study)) this.settings.study = {};
     if (!this.settings.activity || typeof this.settings.activity !== "object" || Array.isArray(this.settings.activity)) this.settings.activity = {};
-    this.applyButtonVars();
+    this.applyCssVars();
     this.addSettingTab(new QuizBoxSettingTab(this.app, this));
     // 设置页改完可回调:刷新学习面板(题库题型分组等即时生效)
     this.refreshPanel = () => refreshFavViews();
@@ -1128,6 +1528,8 @@ export default class QuizBlockPlugin extends Plugin {
     this.setupVaultListeners();
     // 收藏夹/复习独立窗口:像 SR 闪卡复习那样用 modal 弹窗(非标签页、非侧栏)。点星图标打开/聚焦。
     this.addRibbonIcon("star", "Better Quiz Box", () => openPanel(this));
+    // 面板也开一条命令:可自行绑热键。跳到原文后按热键即回到刚才那道题(见 pendingView)
+    this.addCommand({ id: "open-panel", name: t("打开题库面板"), callback: () => openPanel(this) });
     // 索引必须等 vault 就绪(onload 时 getMarkdownFiles() 还是 0,过早建索引=空索引)
     this.app.workspace.onLayoutReady(async () => {
       // ensureIndexForMiss 已建过(启动竞态保险先跑)就不重复全库重建
@@ -1160,37 +1562,40 @@ export default class QuizBlockPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  /* —— 按钮外观:设置 → CSS 变量(body 上,渲染层直接消费) —— */
-  applyButtonVars() {
+  /* —— 外观设置 → CSS 变量 / body 类(body 上,渲染层与 styles.css 直接消费) —— */
+  applyCssVars() {
     if (typeof document === "undefined") return; // 非 Electron 环境(测试沙箱)静默跳过
     // 常规设计习惯:接近纯白(#fafafa)/接近纯黑(#1a1a1a),不用 #fff/#000 那么彻底
     const WHITE = "#fafafa";
     const BLACK = "#1a1a1a";
-    const fgColor = (cfg, dark) => {
+    const dark = document.body.classList.contains("theme-dark");
+    const fgColor = (cfg) => {
       if (cfg.fg === "white") return WHITE;
       if (cfg.fg === "black") return BLACK;
       // 自动 = 深色主题近白/浅色主题近黑(按用户主题,不读按钮深浅);反自动 = 相反
-      const anti = cfg.fg === "anti";
-      return (dark !== anti) ? WHITE : BLACK;
+      return (dark !== (cfg.fg === "anti")) ? WHITE : BLACK;
     };
     const hoverFactor = (v) => 1 + (typeof v === "number" ? v : 0); // -1..1 → 0..2,0=不变
-    const s = this.settings.btnSubmit || {};
-    const r = this.settings.btnReset || {};
-    const dark = document.body.classList.contains("theme-dark");
     const set = (k, v) => document.body.style.setProperty(k, v);
-    set("--bqb-submit-mix", String(s.mix != null ? s.mix : 30));
-    set("--bqb-submit-bright", String(hoverFactor(s.hover)));
-    set("--bqb-submit-color", fgColor(s, dark));
-    set("--bqb-submit-weight", s.bold ? "600" : "400");
-    set("--bqb-reset-mix", String(r.mix != null ? r.mix : 10));
-    set("--bqb-reset-bright", String(hoverFactor(r.hover)));
-    set("--bqb-reset-color", fgColor(r, dark));
-    set("--bqb-reset-weight", r.bold ? "600" : "400");
+    const buttonVars = (prefix, cfg, defMix) => {
+      set(`--bqb-${prefix}-mix`, String(cfg.mix != null ? cfg.mix : defMix));
+      set(`--bqb-${prefix}-bright`, String(hoverFactor(cfg.hover)));
+      set(`--bqb-${prefix}-color`, fgColor(cfg));
+      set(`--bqb-${prefix}-weight`, cfg.bold ? "600" : "400");
+    };
+    buttonVars("submit", this.settings.btnSubmit || {}, 30);
+    buttonVars("reset", this.settings.btnReset || {}, 10);
     // 收藏按钮:尺寸与阅读视图偏移走 CSS 变量;编辑横向微调由 JS(placeFavoriteOnEmbed)读 settings
     const fb = this.settings.favBtn || {};
     set("--bqb-fav-size", (fb.size != null ? fb.size : 24) + "px");
     set("--bqb-fav-read-dx", (fb.readDX || 0) + "px");
     set("--bqb-fav-read-dy", (fb.readDY || 0) + "px");
+    // [h] 提示文本边距(左右分别调 + 与末选项的间距)
+    set("--bqb-hint-ml", (this.settings.hintMarginLeft || 0) + "px");
+    set("--bqb-hint-mr", (this.settings.hintMarginRight || 0) + "px");
+    set("--bqb-hint-mt", (this.settings.hintMarginTop != null ? this.settings.hintMarginTop : 10) + "px");
+    // 复习页字号缩放(相对笔记正文)
+    set("--bqb-rv-scale", String((this.settings.reviewScale || 85) / 100));
   }
 
   // 调试日志(设置栏开关,默认关):排查问题时在控制台看 [bqb] 行

@@ -1,6 +1,7 @@
 /* Better Quiz Box — 全库 id 索引(单一事实源)
  * 三张内存表:
- *   idIndex      正向:id → { file, source, question, options, details, attrs, currentOrder }
+ *   idIndex      正向:id → { file, line, source, question, options, details, attrs, currentOrder }
+ *                line 是起始围栏行号(0 基),"跳到原文"据此定位
  *                currentOrder 是该题"当前显示顺序"(源题渲染时写入;选项未变的重建沿袭,编辑不重摇)
  *   refIndex     反向:id → 引用它的文件路径集合(bind/copy 定点查找)
  *   liveBindings 活动:已渲染的 bind/copy 块句柄,目标更新后定点重渲
@@ -67,6 +68,7 @@ export function getRefFiles(target) {
 
 /* --------------- 文件置换(核心原语) --------------- */
 
+// 扫出所有 quiz 块:source 为块内文本,line 为起始围栏行号(0 基,供"跳到原文"定位)
 function scanSources(text) {
   const lines = text.split("\n");
   const out = [];
@@ -75,7 +77,7 @@ function scanSources(text) {
     if (!/^```[ \t]*quiz[ \t]*$/i.test(lines[i])) { i++; continue; }
     let j = i + 1;
     while (j < lines.length && !/^```[ \t]*$/.test(lines[j])) j++;
-    out.push(lines.slice(i + 1, j).join("\n"));
+    out.push({ source: lines.slice(i + 1, j).join("\n"), line: i });
     i = j + 1;
   }
   return out;
@@ -108,7 +110,7 @@ export function replaceFileEntries(filePath, text) {
     if (!s.size) refIndex.delete(b);
   }
   if (text && text.includes("```quiz")) {
-    for (const source of scanSources(text)) {
+    for (const { source, line } of scanSources(text)) {
       const data = parseQuiz(source);
       if (data.attrs.binding) {
         registerRef(data.attrs.binding.target, filePath);
@@ -122,6 +124,7 @@ export function replaceFileEntries(filePath, text) {
         prev && optSigOf(prev.options) === optSigOf(data.options) ? prev.currentOrder || null : null;
       idIndex.set(k, {
         file: filePath,
+        line, // 起始围栏行号(0 基):"跳到原文"定位用
         source,
         question: data.question,
         options: data.options,

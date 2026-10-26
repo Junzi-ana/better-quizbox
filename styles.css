@@ -2,6 +2,31 @@
  * 纯瞬态作答;选项为 Markdown 内容,无 [ ]/[c] 显示
  * 模式:static / immediate / non-immediate;可选自动编号标签(abc/123) */
 
+/* ========== 颜色速查(全插件配色从主题变量来,不写死色相;写死的见末行) ==========
+ * --text-accent          主题强调色。Phycat 下 = 粉 #ff7096(星标/「待复习」芯片/热力图/开始练习底/待学习字色)
+ * --text-faint           更淡次级色。Phycat 下 = 粉混 20% 透明(行号/「待学习」字色/间隔符)
+ * --text-muted           次级文字(说明/来源/计数)
+ * --text-normal          正文色
+ * --background-primary   页面底色(Phycat 浅色 = #fff7fa 近白粉;CM 编辑器底)
+ * --background-secondary 芯片/卡片底(Phycat = bg 混白 5%,与页面底几乎同色)
+ * --background-modifier-border       边框/分割线
+ * --background-modifier-hover        悬停底色(按钮混色兜底也是它)
+ * --background-modifier-border-hover 悬停边框
+ * --interactive-accent  强调色。注意:Obsidian「外观→强调色」会用 body 内联样式覆盖它,
+ *                       可能不是粉 → 新按钮一律改用 --text-accent,别再依赖它
+ * --text-on-accent      强调色上的文字(白)
+ * --text-error          错误红(语法错误/删除分类)
+ * 写死颜色:批改语义色(对绿/错红/选中灰蓝,浅深两套,见 immediate 段标注)、
+ *   CM 关键字 #d73a49、CM 类名 #6f42c1(均照抄 latex-suite)、开始练习白字 #ffffff
+ * 按钮混色变量(由设置面板驱动,main.applyCssVars 写入 body):
+ *   --bqb-submit-mix 提交钮混色%(默认30) --bqb-submit-bright 悬停亮度(1.12) --bqb-submit-color 字色 --bqb-submit-weight 字重
+ *   --bqb-reset-mix  重置钮混色%(默认10) --bqb-reset-bright  悬停亮度(1.12) --bqb-reset-color  字色 --bqb-reset-weight 字重
+ *   --bqb-fav-size 收藏钮尺寸 --bqb-fav-read-dx/-dy 阅读视图偏移
+ *   --bqb-hint-ml/-mr 提示左右边距 --bqb-hint-mt 提示上边距
+ * 块内局部变量:.quiz-block 上的 --bqb-line(正文行高)/ --bqb-label-fs(标志字号缩放),
+ *   选项标志与提示气泡的标志框据此对齐到"选项第一行文本"
+ * ============================================================================ */
+
 .quiz-block {
     border: 1px solid var(--background-modifier-border);
     border-radius: 6px;
@@ -9,6 +34,9 @@
     margin: 8px 0;
     background-color: var(--background-secondary);
     position: relative; /* 收藏按钮的定位基准 */
+    /* 标志字号缩放;--bqb-line-px(正文一行的高度)由 JS 实测写入(render.markLineHeight),
+     * 标志盒按它对齐到选项第一行的垂直中心 */
+    --bqb-label-fs: 0.78;
 }
 
 /* ===== 收藏按钮 =====
@@ -92,11 +120,15 @@
     user-select: none;
 }
 
+/* 批改 ✓/✗:占满一行高并内部居中 → 与选项第一行文本对齐(不随选项行高变化) */
 .quiz-option::before {
     content: "";
+    display: flex;
+    align-items: center;
     flex: none;
+    height: var(--bqb-line-px, 1.5em);
     font-weight: 700;
-    line-height: 1.4;
+    line-height: 1;
 }
 
 .quiz-option__body {
@@ -129,6 +161,10 @@
 }
 
 /* ===== mode: immediate — 对绿 ✓ / 错红 ✗ / 揭示正确项绿 ✓ ===== */
+/* 本段为批改语义色,写死不跟主题(红=错 / 绿=对 / 选中=灰蓝;浅色主题用亮底深字,深色主题用深底亮字):
+ *   错:底 #fee2e2(浅红) 边 #ef4444(红) 字 #b91c1c(深红);深色:底 #3f1115 边 #f87171 字 #fecaca
+ *   对:底 #dcfce7(浅绿) 边 #16a34a(绿) 字 #15803d(深绿);深色:底 #052e16 边 #4ade80 字 #bbf7d0
+ *   选中(non-immediate):浅色底 #e2e8f0 边 #64748b 字 #1e293b;深色底 #334155 边 #94a3b8 字 #f1f5f9 */
 .quiz-option--wrong {
     background-color: #fee2e2 !important;
     border-color: #ef4444 !important;
@@ -183,7 +219,9 @@
 }
 
 /* ===== 自动编号标签(<!-- number: abc|123 -->)===== */
-/* 仅在设置了 number 时(.quiz-block--numbered)显示;小框比背景亮一档且可区分 */
+/* 仅在设置了 number 时(.quiz-block--numbered)显示;小框比背景亮一档且可区分。
+ * 盒子尺寸不变,只靠 margin-top 把它挪到"选项第一行"的垂直中心:
+ *   行高(换算到标签自身 em)= --bqb-line / --bqb-label-fs;- 盒高 1.5em;差的一半就是上边距 */
 .quiz-option__label {
     display: none;
     align-items: center;
@@ -191,11 +229,11 @@
     flex: none;
     min-width: 1.5em;
     height: 1.5em;
-    margin-top: 1px;
+    margin-top: calc((var(--bqb-line-px, 1.5em) - 1.5em) * 0.5);
     padding: 0 2px;
     border-radius: 4px;
     font-family: var(--font-monospace);
-    font-size: 0.78em;
+    font-size: calc(1em * var(--bqb-label-fs));
     font-weight: 700;
     line-height: 1;
     user-select: none;
@@ -273,19 +311,8 @@
     color: #fecaca;
 }
 
-/* 提交 / 重置按钮:全用 Obsidian 主题变量,自动适配任何主题明暗 */
-.quiz-action-btn {
-    border: 1px solid transparent;
-    border-radius: 4px;
-    padding: 6px 16px;
-    font-size: 0.85em;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-/* 提交 / 重置按钮:外观全部由设置面板经 CSS 变量驱动(main.mjs applyButtonVars 写入 body) */
+/* 提交 / 重置按钮:全用 Obsidian 主题变量,自动适配任何主题明暗;
+   外观由设置面板经 CSS 变量驱动(main.mjs applyButtonVars 写入 body) */
 .quiz-action-btn {
     border: 1px solid transparent;
     border-radius: 4px;
@@ -350,11 +377,9 @@
     background-color: var(--background-primary);
 }
 
-/* 解析块:static 恒显示;动态块在作答后显示 */
+/* 解析/提示块:[h] 提示常驻显示(上方的 .quiz-hint 容器负责间距) */
 .quiz-details {
     display: none;
-    margin-top: 2px;
-    margin-bottom: -10px;
     color: var(--text-muted);
 }
 
@@ -364,6 +389,11 @@
 
 .quiz-details p {
     margin: 0;
+}
+
+/* [h] 提示文本:上/左/右边距由设置驱动(默认上 10px、左右 0、下 12px) */
+.quiz-hint {
+    margin: var(--bqb-hint-mt, 10px) var(--bqb-hint-mr, 0px) 12px var(--bqb-hint-ml, 0px);
 }
 
 /* 编辑视图嵌入块:去掉外框干扰 */
@@ -486,11 +516,18 @@
     background-color: var(--background-modifier-hover);
 }
 
-/* 列表星:外观同样全权交给 .clickable-icon;这里只管常显/已收藏着色/未收藏变淡 */
+/* 列表星:外观同样全权交给 .clickable-icon;这里只管常显/已收藏着色/未收藏变淡/行内垂直居中/去 hover 描边 */
 .bqb-favlist-star {
     flex: none;
     opacity: 1;
     color: var(--text-accent);
+    align-self: center; /* 行高由题干+meta 两行撑起,星标垂直居中 */
+}
+
+.bqb-favlist-star:hover {
+    outline: none;
+    box-shadow: none;
+    border: none; /* 去掉 clickable-icon 悬停描边(底部背景块保留) */
 }
 
 .bqb-favlist-star.bqb-fav-off {
@@ -503,6 +540,30 @@
 
 .bqb-favlist-star svg {
     fill: var(--text-accent);
+    stroke: none; /* 去掉五角星图形自带的描边(悬停时出现的黑星线) */
+}
+
+/* 列表行尾「跳到原文」图标:常显但淡,悬停变主题色;与星标一样垂直居中。
+   图标用细一档的箭头(→),尺寸比默认图标小一号,免得比题干更抢眼 */
+.bqb-favlist-jump {
+    flex: none;
+    align-self: center;
+    opacity: 0.45;
+    color: var(--text-muted);
+    --icon-size: 14px;
+}
+
+.bqb-favlist-jump:hover {
+    opacity: 1;
+    color: var(--text-accent);
+    outline: none;
+    box-shadow: none;
+    border: none;
+}
+
+.bqb-favlist-jump svg {
+    width: 14px;
+    height: 14px;
 }
 
 .bqb-favlist-info {
@@ -551,7 +612,7 @@
     font-size: 0.78em;
     font-weight: 600;
     color: var(--text-muted);
-    padding: 3px 2px;
+    padding: 8px 6px; /* 原先 3px 2px,适配行内多选框/全选文字(先 6px 4px 后再放宽) */
 }
 
 .bqb-favgrp-head::before {
@@ -644,13 +705,60 @@
     padding: 0 5px;
 }
 
-.bqb-favlist-catbtn {
+/* 管理分类模式:行尾多选框 + 组头尾部的全选/全不选 + 弹窗层批量操作条 */
+.bqb-favlist-row .bqb-mgmtbox {
     flex: none;
-    opacity: 0.6;
+    align-self: center;
+    margin: 0;
 }
 
-.bqb-favlist-row:hover .bqb-favlist-catbtn {
-    opacity: 1;
+/* 右对齐容器:管理模式的组头尾块(删除分类·全不选·☐)整体贴最右,内部紧凑 */
+.bqb-mgmtrt {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bqb-mgmtall {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    font-weight: normal;
+    cursor: pointer;
+}
+
+/* 右对齐块内的中点间隔符 */
+.bqb-mgmt-dot {
+    color: var(--text-faint);
+    font-weight: normal;
+}
+
+/* 管理模式下删除分类红字:非按钮样,悬停加下划线 */
+.bqb-mgmt-del {
+    color: var(--text-error);
+    cursor: pointer;
+    font-weight: normal;
+}
+
+.bqb-mgmt-del:hover {
+    text-decoration: underline;
+}
+
+.bqb-mgmtbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--background-modifier-border);
+    background-color: var(--background-primary);
+}
+
+.bqb-mgmtbar-n {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-left: auto;
 }
 
 /* 分类管理行:输入 + 添加 */
@@ -666,16 +774,6 @@
 
 .bqb-catmg-add {
     flex: none;
-}
-
-/* 分组头删除按钮(仅自建分类):排到行最右 */
-.bqb-favgrp-del {
-    margin-left: auto;
-    opacity: 0.6;
-}
-
-.bqb-favgrp-del:hover {
-    opacity: 1;
 }
 
 /* ===== 学习面板(modal 独立窗口):主页 / 复习页 ===== */
@@ -932,6 +1030,76 @@
     border-radius: 8px;
     padding: 12px;
     background-color: var(--background-primary);
+}
+
+/* 复习页容器:整页(题头/题卡/下一题)共用一套字号 = 笔记正文 × 设置的比例。
+ * 复习窗口比笔记窄,直接用笔记正文的字号会显得过大 */
+.bqb-rvpage {
+    font-size: calc(var(--font-text-size, 1rem) * var(--bqb-rv-scale, 0.85));
+}
+
+/* 复习页卡片挂了 markdown-preview-view + markdown-rendered(与笔记预览同一套主题上下文),
+ * 这里把"预览容器"自身的排版外壳(外边距/滚动/背景)改回卡片应有的样子。
+ * 字号:复习窗口比笔记页窄,正文按设置的比例(--bqb-rv-scale,默认 85%)缩小;
+ * 卡片内一切尺寸都是 em(选项/编号框/「提示」标志/提交按钮/判定横幅)→ 自动等比跟随 */
+.bqb-study-card.markdown-preview-view {
+    padding: 12px;
+    height: auto;
+    overflow: visible;
+    background-color: var(--background-primary);
+    /* 字号由外层 .bqb-rvpage 统一给出(这里压掉预览容器自带的 --font-text-size) */
+    font-size: inherit;
+}
+
+/* 复习页头部:题号(与题型一样加粗)+ 题型/来源(与"第 a / b 题"同行) */
+.bqb-study-rvprog {
+    font-weight: 600;
+}
+
+.bqb-study-rvmeta {
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+.bqb-study-rvmeta--strong {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.bqb-study-rvmeta-dot {
+    color: var(--text-faint);
+    font-weight: normal;
+}
+
+/* 浏览页的卡片来源:可点跳原文,悬停加下划线提示可点 */
+.bqb-study-rvsrc {
+    cursor: pointer;
+}
+
+.bqb-study-rvsrc:hover {
+    text-decoration: underline;
+    color: var(--text-accent);
+}
+
+/* 浏览页恒驻翻页条:上一题 / 下一题(等宽并排,题目正下方) */
+.bqb-browse-nav {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.bqb-browse-btn {
+    flex: 1;
+    padding: 8px 0;
+    font-weight: 600;
+    border-radius: 6px;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    cursor: pointer;
+}
+
+.bqb-browse-btn:hover {
+    filter: brightness(0.93);
 }
 
 /* 判定后的"下次复习时刻"(紧跟正牌判定横幅之下) */
