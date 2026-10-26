@@ -1,5 +1,13 @@
 # Changelog
 
+
+## 4.3.2 — 2026-10-27
+
+- Explanations below the block: the paragraphs directly under a `quiz` fence are now read as that question's explanation and shown on the review/browse pages after grading. The new `<!-- answer-paras: N -->` key controls how many paragraphs are taken (default 1; anything that isn't a positive integer falls back to 1). Reading stops at the next fence, a heading, a horizontal rule, or a line that is entirely an HTML comment (block attributes, `<!--SR:...-->`, etc.). This is independent of the in-block `[h]` hint — neither overwrites the other.
+- Fixed a blank Browse page in the study panel: the source label chained `setText()` (which returns void in Obsidian) and then called `setAttribute()` on the result, throwing and aborting the rest of the render. The text is now passed via the element options.
+- The "next review" line under the verdict is a slightly lighter tone (text color mixed with 40% white) and sits 4px lower, using a relative offset so the buttons below do not move.
+- Internal cleanup: dropped the appearance-tweaks settings branch that was permanently disabled (~145 lines) and 29 translation entries belonging to it, deduplicated the review/browse card assembly into shared helpers, removed an unused parameter, and pruned stale comments.
+
 ## 3.5.0 — 2026-10-13
 
 - Favorite button: a star button on each quiz block (top-right in editing view, floating on the block in reading view). Click to favorite/unfavorite a question; favorites persist in plugin data. The button's position adapts to whoever occupies the corner (the native `</>` source button, quote buttons from other plugins) via live DOM measurement, and the star state syncs instantly between editing and reading views.

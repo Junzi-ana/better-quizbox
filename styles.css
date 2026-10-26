@@ -3,7 +3,7 @@
  * 模式:static / immediate / non-immediate;可选自动编号标签(abc/123) */
 
 /* ========== 颜色速查(全插件配色从主题变量来,不写死色相;写死的见末行) ==========
- * --text-accent          主题强调色。Phycat 下 = 粉 #ff7096(星标/「待复习」芯片/热力图/开始练习底/待学习字色)
+ * --text-accent          主题强调色。Phycat 下 = 粉 #ff7096(星标/「待复习」芯片/热力图/入口按钮底/待学习字色)
  * --text-faint           更淡次级色。Phycat 下 = 粉混 20% 透明(行号/「待学习」字色/间隔符)
  * --text-muted           次级文字(说明/来源/计数)
  * --text-normal          正文色
@@ -17,14 +17,14 @@
  * --text-on-accent      强调色上的文字(白)
  * --text-error          错误红(语法错误/删除分类)
  * 写死颜色:批改语义色(对绿/错红/选中灰蓝,浅深两套,见 immediate 段标注)、
- *   CM 关键字 #d73a49、CM 类名 #6f42c1(均照抄 latex-suite)、开始练习白字 #ffffff
+ *   CM 关键字 #d73a49、CM 类名 #6f42c1(均照抄 latex-suite)、入口按钮白字 #ffffff
  * 按钮混色变量(由设置面板驱动,main.applyCssVars 写入 body):
  *   --bqb-submit-mix 提交钮混色%(默认30) --bqb-submit-bright 悬停亮度(1.12) --bqb-submit-color 字色 --bqb-submit-weight 字重
  *   --bqb-reset-mix  重置钮混色%(默认10) --bqb-reset-bright  悬停亮度(1.12) --bqb-reset-color  字色 --bqb-reset-weight 字重
  *   --bqb-fav-size 收藏钮尺寸 --bqb-fav-read-dx/-dy 阅读视图偏移
  *   --bqb-hint-ml/-mr 提示左右边距 --bqb-hint-mt 提示上边距
  * 块内局部变量:.quiz-block 上的 --bqb-line(正文行高)/ --bqb-label-fs(标志字号缩放),
- *   选项标志与提示气泡的标志框据此对齐到"选项第一行文本"
+ *   选项标志与「提示」标志框据此对齐到"选项第一行文本"
  * ============================================================================ */
 
 .quiz-block {
@@ -312,7 +312,7 @@
 }
 
 /* 提交 / 重置按钮:全用 Obsidian 主题变量,自动适配任何主题明暗;
-   外观由设置面板经 CSS 变量驱动(main.mjs applyButtonVars 写入 body) */
+   外观由设置面板经 CSS 变量驱动(main.mjs applyCssVars 写入 body) */
 .quiz-action-btn {
     border: 1px solid transparent;
     border-radius: 4px;
@@ -396,6 +396,19 @@
     margin: var(--bqb-hint-mt, 10px) var(--bqb-hint-mr, 0px) 12px var(--bqb-hint-ml, 0px);
 }
 
+/* 解析(复习/浏览页专用):在选择题框外面、复习卡框里面,普通正文,不套框不加标志。
+   笔记页面里不显示这块,所以没有显隐/同步问题。
+   上/下/左边距由 JS 直接写成内联样式(见 StudyPanel.appendAnswer),不经 CSS 变量中转 */
+.bqb-rv-answer {
+    display: block;
+}
+
+/* 卡片里的题目框不再自带下外边距(笔记里那 8px 是块与块之间的距离),
+   让"解析上边距"成为解析与题目框之间唯一的口径 */
+.bqb-study-card .quiz-block {
+    margin-bottom: 0;
+}
+
 /* 编辑视图嵌入块:去掉外框干扰 */
 .cm-embed-block:has(.quiz-block),
 .cm-embed-block:has(.quiz-block):hover {
@@ -409,7 +422,7 @@
     bottom: 16px !important;
 }
 
-/* ===== 设置页折叠分组:标题可开合,默认收起(测试类样式) ===== */
+/* ===== 设置页折叠分组:标题可开合,默认收起 ===== */
 .bqb-fold-head .setting-item-info {
     cursor: pointer;
     position: relative;
@@ -497,7 +510,7 @@
     display: none;
 }
 
-/* ===== 收藏夹视图(测试用,侧栏唤出)===== */
+/* ===== 题库页列表:顶栏 / 条目行 / 分组框 ===== */
 .bqb-favlist-head {
     color: var(--text-muted);
     font-size: 0.85em;
@@ -612,7 +625,7 @@
     font-size: 0.78em;
     font-weight: 600;
     color: var(--text-muted);
-    padding: 8px 6px; /* 原先 3px 2px,适配行内多选框/全选文字(先 6px 4px 后再放宽) */
+    padding: 8px 6px; /* 留出行内多选框/全选文字的高度 */
 }
 
 .bqb-favgrp-head::before {
@@ -660,12 +673,6 @@
 
 .bqb-showfav:hover {
     color: var(--text-normal);
-}
-
-.bqb-showfav--on {
-    color: var(--text-accent);
-    border-color: var(--text-accent);
-    font-weight: 600;
 }
 
 .bqb-tabs {
@@ -777,14 +784,49 @@
 }
 
 /* ===== 学习面板(modal 独立窗口):主页 / 复习页 ===== */
+/* 弹窗自身不滚:固定高度 + 纵向 flex,把滚动完全交给 .modal-content,
+   否则真正滚动的是 .modal,底部条的 sticky 就没有可活动的空间(表现为"滚到最后才见到按钮") */
 .bqb-study-modal {
     width: min(680px, 92vw);
     height: min(78vh, 720px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
-/* 弹窗内滚动区 */
+.bqb-study-modal .modal-title {
+    flex: none;
+}
+
+/* 弹窗内滚动区(主页/题库页用) */
 .bqb-study-modal .modal-content {
     overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* 复习/浏览页:内容区分成"滚动区 + 底部条"两段,谁在最下面由布局决定,
+   不再依赖 margin-top:auto 或 sticky 的前提条件 */
+.bqb-study-modal .modal-content.bqb-rv-shell {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 底部条:恒贴底时它是滚动区的兄弟(天然在最下面);
+   跟随内容时它排在滚动区末尾,并 sticky 住 —— 内容短就跟着内容,长到要滚才贴底 */
+.bqb-rv-footer {
+    flex: none;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background-color: var(--background-primary);
+    padding-top: 4px;
+}
+
+/* 还没提交(内容为空)时不占位 */
+.bqb-rv-footer:empty {
+    display: none;
 }
 
 /* 主页问候语 */
@@ -1038,6 +1080,13 @@
     font-size: calc(var(--font-text-size, 1rem) * var(--bqb-rv-scale, 0.85));
 }
 
+/* 复习/浏览页的滚动区:占满内容区剩余高度,自己滚 */
+.bqb-rv-shell > .bqb-rvpage {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
 /* 复习页卡片挂了 markdown-preview-view + markdown-rendered(与笔记预览同一套主题上下文),
  * 这里把"预览容器"自身的排版外壳(外边距/滚动/背景)改回卡片应有的样子。
  * 字号:复习窗口比笔记页窄,正文按设置的比例(--bqb-rv-scale,默认 85%)缩小;
@@ -1102,11 +1151,14 @@
     filter: brightness(0.93);
 }
 
-/* 判定后的"下次复习时刻"(紧跟正牌判定横幅之下) */
+/* 判定后的"下次复习时刻":比正文淡一档(正文色混 40% 白),整行下移 4px(相对位移,不占布局) */
 .bqb-study-rvnext {
-    margin-top: 8px;
+    margin-top: 10px;
     font-size: 0.85em;
-    color: var(--text-muted);
+    color: var(--text-normal);
+    color: color-mix(in srgb, var(--text-normal), white 40%);
+    position: relative;
+    top: 4px;
 }
 
 /* 完成页 */

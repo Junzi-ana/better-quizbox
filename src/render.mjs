@@ -103,6 +103,7 @@ export function applyVisuals(block, data, ctrl) {
     const visible = always || mode === "static" || hasAnswer;
     details.toggleClass("quiz-details--visible", visible);
   }
+
   if (ctrl) setupActions(block, data, ctrl, ansLetters, pickLetters);
 }
 

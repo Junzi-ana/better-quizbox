@@ -4,8 +4,9 @@
 
 /* ------------------------------ 块属性(指令) -------------------------------- */
 
-export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind", "copy", "stem", "submit", "reset"];
-const ATTR_PAIR_RE = /([A-Za-z]+)\s*[:=]\s*([^,;\n]*)/g;
+export const ATTR_KEYS = ["mode", "shuffle", "number", "id", "bind", "copy", "stem", "submit", "reset", "answer-paras"];
+// 键名允许连字符(如 answer-paras)
+const ATTR_PAIR_RE = /([A-Za-z][A-Za-z-]*)\s*[:=]\s*([^,;\n]*)/g;
 
 // 解析一整条 HTML 注释指令:返回 [{key,val}, ...]
 // 支持一行内多条,用逗号/分号/换行分隔,如 <!-- mode: static, number: abc -->
@@ -48,6 +49,12 @@ export function normalizeNumberToken(v) {
   return null;
 }
 
+// 块外解析读几段:正整数才认,其余(空/0/负数/胡写)返回 null → 按默认 1 段
+export function normalizeCountToken(v) {
+  const n = parseInt(String(v).trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 // 重置方式: auto(切页重渲染即重置) / manual(批改状态保留直到按重置按钮);非法值返回 null(视为未设置)
 export function normalizeResetToken(v) {
   const t = v.toLowerCase().replace(/[\s_]+/g, "");
@@ -79,7 +86,7 @@ export function trimBlankEdges(lines) {
 
 export function parseQuiz(source) {
   const raw = source.split("\n");
-  const attrs = { mode: null, shuffle: null, number: null, id: null, binding: null, stem: null, submit: null, reset: null };
+  const attrs = { mode: null, shuffle: null, number: null, id: null, binding: null, stem: null, submit: null, reset: null, answerParas: null };
   const content = [];
   for (const line of raw) {
     const attrsList = parseAttrComment(line);
@@ -94,14 +101,16 @@ export function parseQuiz(source) {
           continue;
         }
         if (a.val === "") continue; // 空值不占用"首个生效",后续同名属性仍可生效
-        if (attrs[a.key] !== null) continue;
-        if (a.key === "mode") attrs.mode = normalizeModeToken(a.val);
-        else if (a.key === "shuffle") attrs.shuffle = normalizeBoolToken(a.val);
-        else if (a.key === "number") attrs.number = normalizeNumberToken(a.val);
-        else if (a.key === "stem") attrs.stem = normalizeBoolToken(a.val);
-        else if (a.key === "submit") attrs.submit = normalizeBoolToken(a.val);
-        else if (a.key === "reset") attrs.reset = normalizeResetToken(a.val);
-        else attrs[a.key] = a.val;
+        const key = a.key === "answer-paras" ? "answerParas" : a.key; // 连字符键 → 字段名
+        if (attrs[key] !== null) continue;
+        if (key === "mode") attrs.mode = normalizeModeToken(a.val);
+        else if (key === "shuffle") attrs.shuffle = normalizeBoolToken(a.val);
+        else if (key === "number") attrs.number = normalizeNumberToken(a.val);
+        else if (key === "stem") attrs.stem = normalizeBoolToken(a.val);
+        else if (key === "submit") attrs.submit = normalizeBoolToken(a.val);
+        else if (key === "reset") attrs.reset = normalizeResetToken(a.val);
+        else if (key === "answerParas") attrs.answerParas = normalizeCountToken(a.val);
+        else attrs[key] = a.val;
       }
       continue;
     }
@@ -180,6 +189,39 @@ export function parseQuiz(source) {
   });
 
   return { question, options, details, attrs };
+}
+
+/* ---------------------------- 块外解析(题目下方的解析正文) ---------------------------- */
+
+// 遇到这些行就停:下一块(任意围栏)、标题、分隔线(即下一题/下一节的开头)、
+// 整行 HTML 注释(块属性、Spaced Repetition 的 <!--SR:...--> 之类,不算解析)
+function isAnswerStopLine(line) {
+  const s = line.trim();
+  return s.startsWith("```") || s.startsWith("<!--") || /^#{1,6}\s/.test(s) || /^(?:-{3,}|\*{3,}|_{3,})$/.test(s);
+}
+
+// 读题目块正下方的解析:段 = 由空行分隔的连续非空行;paras 段收满即停(默认 1 段)。
+// fenceEnd 为闭合围栏行号(0 基)。返回 Markdown 文本,没有内容返回 ""。
+// 注意:这是"解析"(answer),与块内的 [h] 提示(details)是两回事,互不覆盖。
+export function extractAnswer(lines, fenceEnd, paras = 1) {
+  const want = Math.max(1, Math.floor(paras) || 1);
+  let i = fenceEnd + 1;
+  while (i < lines.length && lines[i].trim() === "") i++; // 跳过紧贴围栏的空行
+  const got = [];
+  let stop = false;
+  while (i < lines.length && got.length < want && !stop) {
+    if (isAnswerStopLine(lines[i])) break;
+    const buf = [];
+    while (i < lines.length && lines[i].trim() !== "") {
+      // 段中途撞上下一块/标题/分隔线也停(中间没空行时,`---` 会被当成上文的标题下划线)
+      if (isAnswerStopLine(lines[i])) { stop = true; break; }
+      buf.push(lines[i]);
+      i++;
+    }
+    if (buf.length) got.push(buf.join("\n"));
+    while (i < lines.length && lines[i].trim() === "") i++; // 段间可能不止一个空行
+  }
+  return got.join("\n\n");
 }
 
 /* ------------------------------ 顺序/配对辅助 -------------------------------- */

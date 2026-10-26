@@ -1,7 +1,8 @@
 /* Better Quiz Box — 全库 id 索引(单一事实源)
  * 三张内存表:
- *   idIndex      正向:id → { file, line, source, question, options, details, attrs, currentOrder }
- *                line 是起始围栏行号(0 基),"跳到原文"据此定位
+ *   idIndex      正向:id → { file, line, source, question, options, details, answer, attrs, currentOrder }
+ *                line 是起始围栏行号(0 基),"跳到原文"据此定位;
+ *                details = 块内 [h] 提示,answer = 块外那段解析,两者互相独立
  *                currentOrder 是该题"当前显示顺序"(源题渲染时写入;选项未变的重建沿袭,编辑不重摇)
  *   refIndex     反向:id → 引用它的文件路径集合(bind/copy 定点查找)
  *   liveBindings 活动:已渲染的 bind/copy 块句柄,目标更新后定点重渲
@@ -10,7 +11,7 @@
  *   内容编辑 → 条目重建但 id 不变 → currentOrder 沿袭(选项没变) → 绑定块引用恒有效。
  */
 
-import { parseQuiz } from "./parse.mjs";
+import { parseQuiz, extractAnswer } from "./parse.mjs";
 
 const idIndex = new Map();
 const refIndex = new Map();
@@ -68,7 +69,8 @@ export function getRefFiles(target) {
 
 /* --------------- 文件置换(核心原语) --------------- */
 
-// 扫出所有 quiz 块:source 为块内文本,line 为起始围栏行号(0 基,供"跳到原文"定位)
+// 扫出所有 quiz 块:source 为块内文本,line 为起始围栏行号(0 基,供"跳到原文"定位),
+// end 为闭合围栏行号(块外解析从这里往下读)
 function scanSources(text) {
   const lines = text.split("\n");
   const out = [];
@@ -77,7 +79,7 @@ function scanSources(text) {
     if (!/^```[ \t]*quiz[ \t]*$/i.test(lines[i])) { i++; continue; }
     let j = i + 1;
     while (j < lines.length && !/^```[ \t]*$/.test(lines[j])) j++;
-    out.push({ source: lines.slice(i + 1, j).join("\n"), line: i });
+    out.push({ source: lines.slice(i + 1, j).join("\n"), line: i, end: j });
     i = j + 1;
   }
   return out;
@@ -110,7 +112,8 @@ export function replaceFileEntries(filePath, text) {
     if (!s.size) refIndex.delete(b);
   }
   if (text && text.includes("```quiz")) {
-    for (const { source, line } of scanSources(text)) {
+    const lines = text.split("\n");
+    for (const { source, line, end } of scanSources(text)) {
       const data = parseQuiz(source);
       if (data.attrs.binding) {
         registerRef(data.attrs.binding.target, filePath);
@@ -118,17 +121,21 @@ export function replaceFileEntries(filePath, text) {
       }
       if (!data.attrs.id) continue;
       const k = baseOf(data.attrs.id);
+      // 块外解析:读题目正下方若干段(answer-paras 指定,默认 1 段);与块内 [h] 提示无关
+      const answer = extractAnswer(lines, end, data.attrs.answerParas || 1) || undefined;
       const prev = before.get(k) || null;
-      if (!prev || prev.source !== source) changed.add(k);
+      // 解析正文变了也算内容变化(否则绑定块与题库会停在旧解析)
+      if (!prev || prev.source !== source || prev.answer !== answer) changed.add(k);
       const keptOrder =
         prev && optSigOf(prev.options) === optSigOf(data.options) ? prev.currentOrder || null : null;
       idIndex.set(k, {
         file: filePath,
         line, // 起始围栏行号(0 基):"跳到原文"定位用
         source,
+        answer, // 块外那段解析
         question: data.question,
         options: data.options,
-        details: data.details,
+        details: data.details, // 块内 [h] 提示(与解析独立)
         attrs: data.attrs,
         currentOrder: keptOrder,
       });
@@ -274,7 +281,8 @@ export function resolveBinding(attrs, opts = {}) {
   const cloned = {
     question: ref.type === "bind" && stem === false ? "" : target.question,
     options: target.options.map((o) => ({ ...o })),
-    details: target.details,
+    details: target.details, // 块内 [h] 提示
+    answer: target.answer,   // 源题下方的解析(镜像永远取源题的,不取宿主自己的)
     hideStem: ref.type === "bind" && stem === false,
     order: follow,
     attrs: {
